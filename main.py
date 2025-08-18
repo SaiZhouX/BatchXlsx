@@ -1,0 +1,473 @@
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox, scrolledtext
+import os
+import threading
+from pathlib import Path
+import pandas as pd
+from datetime import datetime
+import logging
+
+# 导入自定义模块
+from batch_processor import BatchProcessor
+from bug_analyzer import BugAnalyzer
+from data_validator import DataValidator
+
+class ExcelAnalysisGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Excel批量处理与Bug分析工具")
+        self.root.geometry("1000x700")
+        
+        # 存储文件列表
+        self.file_list = []
+        
+        # 创建界面
+        self.create_widgets()
+        
+        # 配置日志
+        self.setup_logging()
+    
+    def setup_logging(self):
+        """配置日志"""
+        # 创建日志处理器，将日志输出到GUI
+        self.log_handler = GUILogHandler(self.log_text)
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[self.log_handler]
+        )
+        self.logger = logging.getLogger(__name__)
+    
+    def create_widgets(self):
+        """创建界面组件"""
+        # 主框架
+        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # 配置网格权重
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
+        main_frame.columnconfigure(1, weight=1)
+        main_frame.rowconfigure(2, weight=1)
+        main_frame.rowconfigure(4, weight=1)
+        
+        # 标题
+        title_label = ttk.Label(main_frame, text="Excel批量处理与Bug分析工具", 
+                               font=('Arial', 16, 'bold'))
+        title_label.grid(row=0, column=0, columnspan=3, pady=(0, 20))
+        
+        # 文件选择区域
+        file_frame = ttk.LabelFrame(main_frame, text="文件选择", padding="10")
+        file_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        file_frame.columnconfigure(1, weight=1)
+        
+        # 添加单个文件按钮
+        ttk.Button(file_frame, text="添加单个Excel文件", 
+                  command=self.add_single_file).grid(row=0, column=0, padx=(0, 10))
+        
+        # 添加文件夹按钮
+        ttk.Button(file_frame, text="添加文件夹", 
+                  command=self.add_folder).grid(row=0, column=1, padx=(0, 10))
+        
+        # 清空文件列表按钮
+        ttk.Button(file_frame, text="清空列表", 
+                  command=self.clear_files).grid(row=0, column=2)
+        
+        # 文件列表显示
+        list_frame = ttk.LabelFrame(main_frame, text="已选择的文件", padding="10")
+        list_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
+        list_frame.columnconfigure(0, weight=1)
+        list_frame.rowconfigure(0, weight=1)
+        
+        # 创建文件列表
+        self.file_listbox = tk.Listbox(list_frame, height=8)
+        self.file_listbox.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # 滚动条
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.file_listbox.yview)
+        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.file_listbox.configure(yscrollcommand=scrollbar.set)
+        
+        # 操作按钮区域
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=3, column=0, columnspan=3, pady=(0, 10))
+        
+        # 开始分析按钮
+        self.analyze_button = ttk.Button(button_frame, text="开始分析", 
+                                        command=self.start_analysis, 
+                                        style='Accent.TButton')
+        self.analyze_button.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # 进度条
+        self.progress = ttk.Progressbar(button_frame, mode='indeterminate')
+        self.progress.pack(side=tk.LEFT, padx=(0, 10), fill=tk.X, expand=True)
+        
+        # 结果显示区域
+        result_frame = ttk.LabelFrame(main_frame, text="分析结果", padding="10")
+        result_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S))
+        result_frame.columnconfigure(0, weight=1)
+        result_frame.rowconfigure(0, weight=1)
+        
+        # 创建Notebook用于显示不同的结果
+        self.notebook = ttk.Notebook(result_frame)
+        self.notebook.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Bug统计标签页
+        self.bug_stats_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.bug_stats_frame, text="Bug级别统计")
+        
+        # 创建Bug统计表格
+        self.create_bug_stats_table()
+        
+        # 日志标签页
+        log_frame = ttk.Frame(self.notebook)
+        self.notebook.add(log_frame, text="处理日志")
+        
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=15, width=80)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+    
+    def create_bug_stats_table(self):
+        """创建Bug统计表格"""
+        # 表格框架
+        table_frame = ttk.Frame(self.bug_stats_frame)
+        table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # 创建Treeview表格
+        columns = ('日期', 'S级', 'A级', 'B级', 'C级', '未分级', '总计')
+        self.bug_tree = ttk.Treeview(table_frame, columns=columns, show='headings', height=15)
+        
+        # 设置列标题
+        for col in columns:
+            self.bug_tree.heading(col, text=col)
+            self.bug_tree.column(col, width=100, anchor='center')
+        
+        # 添加滚动条
+        v_scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.bug_tree.yview)
+        h_scrollbar = ttk.Scrollbar(table_frame, orient="horizontal", command=self.bug_tree.xview)
+        
+        self.bug_tree.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+        
+        # 布局
+        self.bug_tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        v_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        h_scrollbar.grid(row=1, column=0, sticky=(tk.W, tk.E))
+        
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+        
+        # 统计摘要标签
+        self.summary_label = ttk.Label(self.bug_stats_frame, text="", font=('Arial', 10))
+        self.summary_label.pack(pady=10)
+    
+    def add_single_file(self):
+        """添加单个Excel文件"""
+        file_path = filedialog.askopenfilename(
+            title="选择Excel文件",
+            filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]
+        )
+        
+        if file_path:
+            if file_path not in self.file_list:
+                self.file_list.append(file_path)
+                self.file_listbox.insert(tk.END, os.path.basename(file_path))
+                self.log_message(f"已添加文件: {os.path.basename(file_path)}")
+            else:
+                messagebox.showwarning("警告", "文件已存在于列表中")
+    
+    def add_folder(self):
+        """添加文件夹中的所有Excel文件"""
+        folder_path = filedialog.askdirectory(title="选择包含Excel文件的文件夹")
+        
+        if folder_path:
+            excel_files = []
+            for ext in ['*.xlsx', '*.xls']:
+                excel_files.extend(Path(folder_path).glob(ext))
+            
+            added_count = 0
+            for file_path in excel_files:
+                file_str = str(file_path)
+                if file_str not in self.file_list and not file_path.name.startswith('~$'):
+                    self.file_list.append(file_str)
+                    self.file_listbox.insert(tk.END, file_path.name)
+                    added_count += 1
+            
+            if added_count > 0:
+                self.log_message(f"从文件夹 {os.path.basename(folder_path)} 添加了 {added_count} 个Excel文件")
+            else:
+                messagebox.showinfo("信息", "文件夹中没有找到新的Excel文件")
+    
+    def clear_files(self):
+        """清空文件列表"""
+        self.file_list.clear()
+        self.file_listbox.delete(0, tk.END)
+        self.clear_bug_stats()
+        self.log_message("已清空文件列表")
+    
+    def clear_bug_stats(self):
+        """清空Bug统计表格"""
+        for item in self.bug_tree.get_children():
+            self.bug_tree.delete(item)
+        self.summary_label.config(text="")
+    
+    def log_message(self, message):
+        """在日志区域显示消息"""
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
+        self.log_text.see(tk.END)
+        self.root.update_idletasks()
+    
+    def start_analysis(self):
+        """开始分析"""
+        if not self.file_list:
+            messagebox.showwarning("警告", "请先添加要分析的Excel文件")
+            return
+        
+        # 禁用分析按钮，启动进度条
+        self.analyze_button.config(state='disabled')
+        self.progress.start()
+        
+        # 清空之前的结果
+        self.clear_bug_stats()
+        
+        # 在新线程中执行分析
+        analysis_thread = threading.Thread(target=self.perform_analysis)
+        analysis_thread.daemon = True
+        analysis_thread.start()
+    
+    def perform_analysis(self):
+        """执行分析（在后台线程中运行）"""
+        try:
+            self.log_message("开始分析Excel文件...")
+            
+            # 创建临时input文件夹
+            temp_input = Path("temp_input")
+            temp_input.mkdir(exist_ok=True)
+            
+            # 复制文件到临时文件夹
+            for file_path in self.file_list:
+                src_path = Path(file_path)
+                dst_path = temp_input / src_path.name
+                
+                # 如果目标文件不存在，则复制
+                if not dst_path.exists():
+                    import shutil
+                    shutil.copy2(src_path, dst_path)
+            
+            # 执行批量处理
+            processor = BatchProcessor(input_folder=str(temp_input))
+            xlsx_files = processor.read_all_files()
+            
+            if not xlsx_files:
+                self.root.after(0, lambda: self.analysis_complete("没有找到可处理的文件"))
+                return
+            
+            merged_df = processor.merge_data(xlsx_files)
+            
+            if merged_df.empty:
+                self.root.after(0, lambda: self.analysis_complete("数据合并失败"))
+                return
+            
+            # 生成报告
+            processor.generate_reports(merged_df)
+            
+            # 执行Bug级别分析
+            self.log_message("开始Bug级别分析...")
+            
+            # 查找最新的详细分析报告
+            validator = DataValidator()
+            latest_file = validator.find_latest_report("详细分析报告")
+            
+            if latest_file:
+                analyzer = BugAnalyzer()
+                bug_stats = self.analyze_bug_levels_for_gui(str(latest_file))
+                
+                # 在主线程中更新GUI
+                self.root.after(0, lambda: self.update_bug_stats(bug_stats))
+            
+            # 清理临时文件夹
+            import shutil
+            shutil.rmtree(temp_input, ignore_errors=True)
+            
+            self.root.after(0, lambda: self.analysis_complete("分析完成！"))
+            
+        except Exception as e:
+            error_msg = f"分析过程中出现错误: {str(e)}"
+            self.root.after(0, lambda: self.analysis_complete(error_msg))
+    
+    def analyze_bug_levels_for_gui(self, excel_file_path):
+        """为GUI优化的Bug级别分析"""
+        try:
+            df = pd.read_excel(excel_file_path)
+            
+            self.log_message(f"读取到 {len(df)} 行数据")
+            
+            # 检查来源文件列和级别相关的列
+            source_columns = [col for col in df.columns if any(keyword in col.lower() for keyword in ['来源', 'source', '文件', 'file'])]
+            level_columns = [col for col in df.columns if any(keyword in col.lower() for keyword in ['级别', 'level', '等级', 'priority', '严重', 'severity'])]
+            
+            self.log_message(f"检测到来源列: {source_columns}")
+            self.log_message(f"检测到级别列: {level_columns}")
+            
+            if not source_columns or not level_columns:
+                self.log_message("未找到必要的列")
+                return None
+            
+            source_col = source_columns[0]
+            level_col = level_columns[0]
+            
+            # 数据预处理 - 只删除来源列为空的行
+            self.log_message(f"数据预处理前行数: {len(df)}")
+            df_clean = df.dropna(subset=[source_col]).copy()
+            self.log_message(f"删除来源列为空后行数: {len(df_clean)}")
+            
+            # 对级别为空的数据给默认值
+            df_clean[level_col] = df_clean[level_col].fillna('未分级')
+            
+            # 筛选包含王超的数据进行调试
+            wangchao_data = df_clean[df_clean[source_col].str.contains('王超', na=False)]
+            self.log_message(f"王超相关数据行数: {len(wangchao_data)}")
+            
+            # 从来源文件名中提取日期和测试人信息
+            analyzer = BugAnalyzer()
+            df_clean['日期'] = df_clean[source_col].apply(analyzer.extract_date_and_tester_from_filename)
+            
+            # 检查日期提取结果
+            wangchao_with_date = df_clean[df_clean[source_col].str.contains('王超', na=False)]
+            self.log_message(f"王超数据日期提取结果:")
+            for idx, row in wangchao_with_date.iterrows():
+                self.log_message(f"  文件: {row[source_col]} -> 日期: {row['日期']}")
+            
+            # 统计日期提取成功的数量
+            date_extracted = df_clean['日期'].notna().sum()
+            self.log_message(f"成功提取日期的行数: {date_extracted}")
+            
+            # 过滤掉无法提取日期的记录
+            df_clean = df_clean.dropna(subset=['日期'])
+            self.log_message(f"过滤无日期记录后行数: {len(df_clean)}")
+            
+            # 再次检查王超数据
+            wangchao_final = df_clean[df_clean[source_col].str.contains('王超', na=False)]
+            self.log_message(f"最终王超数据行数: {len(wangchao_final)}")
+            
+            # 处理级别名称，统一格式
+            level_mapping = {
+                'S-严重': 'S级',
+                'A-重要': 'A级', 
+                'B-一般': 'B级',
+                'C-轻微': 'C级'
+            }
+            df_clean['级别'] = df_clean[level_col].map(level_mapping).fillna(df_clean[level_col])
+            
+            # 统计各级别Bug数量
+            result = df_clean.groupby(['日期', '级别']).size().unstack(fill_value=0)
+            
+            # 确保包含所有级别的列
+            for level in ['S级', 'A级', 'B级', 'C级', '未分级']:
+                if level not in result.columns:
+                    result[level] = 0
+            
+            # 重新排序列
+            level_order = ['S级', 'A级', 'B级', 'C级', '未分级']
+            available_levels = [level for level in level_order if level in result.columns]
+            other_levels = [col for col in result.columns if col not in level_order]
+            
+            result = result[available_levels + other_levels]
+            
+            # 添加总计列
+            result['总计'] = result.sum(axis=1)
+            
+            return result
+            
+        except Exception as e:
+            self.log_message(f"Bug级别分析出错: {str(e)}")
+            return None
+    
+    def update_bug_stats(self, bug_stats):
+        """更新Bug统计表格"""
+        if bug_stats is None:
+            self.log_message("无法生成Bug统计数据")
+            return
+        
+        # 清空现有数据
+        self.clear_bug_stats()
+        
+        # 添加数据到表格
+        total_bugs = 0
+        level_totals = {}
+        
+        for date, row in bug_stats.iterrows():
+            values = [date]
+            for col in ['S级', 'A级', 'B级', 'C级', '未分级', '总计']:
+                value = row.get(col, 0)
+                values.append(str(value))
+                if col != '总计':
+                    level_totals[col] = level_totals.get(col, 0) + value
+            
+            total_bugs += row.get('总计', 0)
+            self.bug_tree.insert('', 'end', values=values)
+        
+        # 添加总计行
+        if len(bug_stats) > 1:
+            total_row = ['总计']
+            for col in ['S级', 'A级', 'B级', 'C级', '未分级']:
+                total_row.append(str(level_totals.get(col, 0)))
+            total_row.append(str(total_bugs))
+            
+            self.bug_tree.insert('', 'end', values=total_row, tags=('total',))
+            self.bug_tree.tag_configure('total', background='lightgray', font=('Arial', 9, 'bold'))
+        
+        # 更新统计摘要
+        summary_text = f"总Bug数: {total_bugs}  |  "
+        for level in ['S级', 'A级', 'B级', 'C级', '未分级']:
+            count = level_totals.get(level, 0)
+            if count > 0:
+                summary_text += f"{level}: {count}  "
+        
+        self.summary_label.config(text=summary_text)
+        
+        self.log_message(f"Bug统计完成，共发现 {total_bugs} 个Bug")
+    
+    def analysis_complete(self, message):
+        """分析完成"""
+        self.progress.stop()
+        self.analyze_button.config(state='normal')
+        self.log_message(message)
+        
+        if "完成" in message:
+            messagebox.showinfo("完成", message)
+        elif "错误" in message:
+            messagebox.showerror("错误", message)
+
+class GUILogHandler(logging.Handler):
+    """自定义日志处理器，将日志输出到GUI"""
+    
+    def __init__(self, text_widget):
+        super().__init__()
+        self.text_widget = text_widget
+    
+    def emit(self, record):
+        msg = self.format(record)
+        # 在主线程中更新GUI
+        self.text_widget.after(0, lambda: self._append_log(msg))
+    
+    def _append_log(self, msg):
+        self.text_widget.insert(tk.END, msg + '\n')
+        self.text_widget.see(tk.END)
+
+def main():
+    """主函数"""
+    root = tk.Tk()
+    
+    # 设置主题样式
+    style = ttk.Style()
+    if 'winnative' in style.theme_names():
+        style.theme_use('winnative')
+    
+    # 创建应用
+    app = ExcelAnalysisGUI(root)
+    
+    # 运行应用
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()
