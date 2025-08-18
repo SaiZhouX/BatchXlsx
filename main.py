@@ -98,6 +98,11 @@ class ExcelAnalysisGUI:
                                         style='Accent.TButton')
         self.analyze_button.pack(side=tk.LEFT, padx=(0, 10))
         
+        # Bug级别分析按钮
+        self.bug_analysis_button = ttk.Button(button_frame, text="Bug级别分析", 
+                                             command=self.start_bug_analysis)
+        self.bug_analysis_button.pack(side=tk.LEFT, padx=(0, 10))
+        
         # 进度条
         self.progress = ttk.Progressbar(button_frame, mode='indeterminate')
         self.progress.pack(side=tk.LEFT, padx=(0, 10), fill=tk.X, expand=True)
@@ -132,14 +137,29 @@ class ExcelAnalysisGUI:
         table_frame = ttk.Frame(self.bug_stats_frame)
         table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # 创建Treeview表格
-        columns = ('日期', 'S级', 'A级', 'B级', 'C级', '未分级', '总计')
+        # 创建Treeview表格 - 调整列顺序，将统计列移到日期后面
+        columns = ('日期', '总计', '程序Bug数', '程序Bug修复数', '非程序Bug数', '非程序Bug修复数', 'S级', 'A级', 'B级', 'C级', '未分级')
         self.bug_tree = ttk.Treeview(table_frame, columns=columns, show='headings', height=15)
         
-        # 设置列标题
+        # 设置列标题和列宽
+        column_widths = {
+            '日期': 80,
+            '总计': 60,
+            '程序Bug数': 80,
+            '程序Bug修复数': 90,
+            '非程序Bug数': 90,
+            '非程序Bug修复数': 100,
+            'S级': 50,
+            'A级': 50,
+            'B级': 50,
+            'C级': 50,
+            '未分级': 60
+        }
+        
         for col in columns:
             self.bug_tree.heading(col, text=col)
-            self.bug_tree.column(col, width=100, anchor='center')
+            width = column_widths.get(col, 60)
+            self.bug_tree.column(col, width=width, anchor='center')
         
         # 添加滚动条
         v_scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.bug_tree.yview)
@@ -270,19 +290,13 @@ class ExcelAnalysisGUI:
             # 生成报告
             processor.generate_reports(merged_df)
             
-            # 执行Bug级别分析
-            self.log_message("开始Bug级别分析...")
-            
-            # 查找最新的详细分析报告
+            # 查找最新的详细分析报告并自动打开
             validator = DataValidator()
             latest_file = validator.find_latest_report("详细分析报告")
             
             if latest_file:
-                analyzer = BugAnalyzer()
-                bug_stats = self.analyze_bug_levels_for_gui(str(latest_file))
-                
-                # 在主线程中更新GUI
-                self.root.after(0, lambda: self.update_bug_stats(bug_stats))
+                # 在主线程中打开详细分析报告
+                self.root.after(0, lambda file=str(latest_file): self.open_report_file(file))
             
             # 清理临时文件夹
             import shutil
@@ -376,6 +390,30 @@ class ExcelAnalysisGUI:
             # 添加总计列
             result['总计'] = result.sum(axis=1)
             
+            # 如果数据中包含Bug类型和修复状态列，则添加额外的统计
+            if 'Bug类型' in df_clean.columns and '修复状态' in df_clean.columns:
+                # 统计程序Bug数量
+                program_bugs = df_clean[df_clean['Bug类型'] == '程序Bug'].groupby('日期').size()
+                result['程序Bug数'] = result.index.map(program_bugs).fillna(0).astype(int)
+                
+                # 统计程序Bug修复数量
+                program_bugs_fixed = df_clean[(df_clean['Bug类型'] == '程序Bug') & (df_clean['修复状态'] == '已修复')].groupby('日期').size()
+                result['程序Bug修复数'] = result.index.map(program_bugs_fixed).fillna(0).astype(int)
+                
+                # 统计非程序Bug数量
+                non_program_bugs = df_clean[df_clean['Bug类型'] == '非程序Bug'].groupby('日期').size()
+                result['非程序Bug数'] = result.index.map(non_program_bugs).fillna(0).astype(int)
+                
+                # 统计非程序Bug修复数量
+                non_program_bugs_fixed = df_clean[(df_clean['Bug类型'] == '非程序Bug') & (df_clean['修复状态'] == '已修复')].groupby('日期').size()
+                result['非程序Bug修复数'] = result.index.map(non_program_bugs_fixed).fillna(0).astype(int)
+            else:
+                # 如果没有Bug类型和修复状态列，则填充0
+                result['程序Bug数'] = 0
+                result['程序Bug修复数'] = 0
+                result['非程序Bug数'] = 0
+                result['非程序Bug修复数'] = 0
+            
             return result
             
         except Exception as e:
@@ -396,22 +434,51 @@ class ExcelAnalysisGUI:
         level_totals = {}
         
         for date, row in bug_stats.iterrows():
-            values = [date]
-            for col in ['S级', 'A级', 'B级', 'C级', '未分级', '总计']:
+            # 按新的列顺序填充数据：日期, 总计, 程序Bug数, 程序Bug修复数, 非程序Bug数, 非程序Bug修复数, S级, A级, B级, C级, 未分级
+            values = [
+                date,
+                str(row.get('总计', 0)),
+                str(row.get('程序Bug数', 0)),
+                str(row.get('程序Bug修复数', 0)),
+                str(row.get('非程序Bug数', 0)),
+                str(row.get('非程序Bug修复数', 0)),
+                str(row.get('S级', 0)),
+                str(row.get('A级', 0)),
+                str(row.get('B级', 0)),
+                str(row.get('C级', 0)),
+                str(row.get('未分级', 0))
+            ]
+            
+            # 统计级别总数（不包括统计列）
+            for col in ['S级', 'A级', 'B级', 'C级', '未分级']:
                 value = row.get(col, 0)
-                values.append(str(value))
-                if col != '总计':
-                    level_totals[col] = level_totals.get(col, 0) + value
+                level_totals[col] = level_totals.get(col, 0) + value
             
             total_bugs += row.get('总计', 0)
             self.bug_tree.insert('', 'end', values=values)
         
         # 添加总计行
         if len(bug_stats) > 1:
-            total_row = ['总计']
-            for col in ['S级', 'A级', 'B级', 'C级', '未分级']:
-                total_row.append(str(level_totals.get(col, 0)))
-            total_row.append(str(total_bugs))
+            # 计算程序Bug和非程序Bug的总计
+            total_program_bugs = bug_stats['程序Bug数'].sum() if '程序Bug数' in bug_stats.columns else 0
+            total_program_bugs_fixed = bug_stats['程序Bug修复数'].sum() if '程序Bug修复数' in bug_stats.columns else 0
+            total_non_program_bugs = bug_stats['非程序Bug数'].sum() if '非程序Bug数' in bug_stats.columns else 0
+            total_non_program_bugs_fixed = bug_stats['非程序Bug修复数'].sum() if '非程序Bug修复数' in bug_stats.columns else 0
+            
+            # 按新的列顺序填充总计行：日期, 总计, 程序Bug数, 程序Bug修复数, 非程序Bug数, 非程序Bug修复数, S级, A级, B级, C级, 未分级
+            total_row = [
+                '总计',
+                str(total_bugs),
+                str(total_program_bugs),
+                str(total_program_bugs_fixed),
+                str(total_non_program_bugs),
+                str(total_non_program_bugs_fixed),
+                str(level_totals.get('S级', 0)),
+                str(level_totals.get('A级', 0)),
+                str(level_totals.get('B级', 0)),
+                str(level_totals.get('C级', 0)),
+                str(level_totals.get('未分级', 0))
+            ]
             
             self.bug_tree.insert('', 'end', values=total_row, tags=('total',))
             self.bug_tree.tag_configure('total', background='lightgray', font=('Arial', 9, 'bold'))
@@ -426,6 +493,76 @@ class ExcelAnalysisGUI:
         self.summary_label.config(text=summary_text)
         
         self.log_message(f"Bug统计完成，共发现 {total_bugs} 个Bug")
+    
+    def open_report_file(self, file_path):
+        """打开报告文件"""
+        try:
+            import subprocess
+            import sys
+            
+            if sys.platform.startswith('win'):
+                # Windows
+                os.startfile(file_path)
+            elif sys.platform.startswith('darwin'):
+                # macOS
+                subprocess.call(['open', file_path])
+            else:
+                # Linux
+                subprocess.call(['xdg-open', file_path])
+            
+            self.log_message(f"已打开详细分析报告: {os.path.basename(file_path)}")
+            
+        except Exception as e:
+            self.log_message(f"打开报告文件失败: {str(e)}")
+    
+    def start_bug_analysis(self):
+        """开始Bug级别分析"""
+        # 查找最新的详细分析报告
+        validator = DataValidator()
+        latest_file = validator.find_latest_report("详细分析报告")
+        
+        if not latest_file:
+            messagebox.showwarning("警告", "未找到详细分析报告，请先执行开始分析")
+            return
+        
+        # 禁用按钮，启动进度条
+        self.bug_analysis_button.config(state='disabled')
+        self.progress.start()
+        
+        # 清空之前的Bug统计结果
+        self.clear_bug_stats()
+        
+        # 在新线程中执行Bug级别分析
+        bug_analysis_thread = threading.Thread(target=self.perform_bug_analysis, args=(str(latest_file),))
+        bug_analysis_thread.daemon = True
+        bug_analysis_thread.start()
+    
+    def perform_bug_analysis(self, report_file_path):
+        """执行Bug级别分析（在后台线程中运行）"""
+        try:
+            self.log_message("开始Bug级别分析...")
+            
+            # 执行Bug级别分析
+            bug_stats = self.analyze_bug_levels_for_gui(report_file_path)
+            
+            # 在主线程中更新GUI
+            self.root.after(0, lambda: self.update_bug_stats(bug_stats))
+            self.root.after(0, lambda: self.bug_analysis_complete("Bug级别分析完成！"))
+            
+        except Exception as e:
+            error_msg = f"Bug级别分析过程中出现错误: {str(e)}"
+            self.root.after(0, lambda: self.bug_analysis_complete(error_msg))
+    
+    def bug_analysis_complete(self, message):
+        """Bug级别分析完成"""
+        self.progress.stop()
+        self.bug_analysis_button.config(state='normal')
+        self.log_message(message)
+        
+        if "完成" in message:
+            messagebox.showinfo("完成", message)
+        elif "错误" in message:
+            messagebox.showerror("错误", message)
     
     def analysis_complete(self, message):
         """分析完成"""

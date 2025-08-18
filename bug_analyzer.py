@@ -94,16 +94,37 @@ class BugAnalyzer(ExcelProcessor):
             result = df_clean.groupby(['日期', '级别']).size().unstack(fill_value=0)
             
             # 确保包含S、A、B、C级别的列
-            for level in ['S级', 'A级', 'B级', 'C级']:
+            for level in ['S级', 'A级', 'B级', 'C级', '未分级']:
                 if level not in result.columns:
                     result[level] = 0
             
             # 重新排序列
-            level_order = ['S级', 'A级', 'B级', 'C级']
+            level_order = ['S级', 'A级', 'B级', 'C级', '未分级']
             available_levels = [level for level in level_order if level in result.columns]
             other_levels = [col for col in result.columns if col not in level_order]
             
             result = result[available_levels + other_levels]
+            
+            # 添加总计列
+            result['总计'] = result.sum(axis=1)
+            
+            # 如果数据中包含Bug类型和修复状态列，则添加额外的统计
+            if 'Bug类型' in df_clean.columns and '修复状态' in df_clean.columns:
+                # 统计程序Bug数量
+                program_bugs = df_clean[df_clean['Bug类型'] == '程序Bug'].groupby('日期').size()
+                result['程序Bug数'] = result.index.map(program_bugs).fillna(0).astype(int)
+                
+                # 统计程序Bug修复数量
+                program_bugs_fixed = df_clean[(df_clean['Bug类型'] == '程序Bug') & (df_clean['修复状态'] == '已修复')].groupby('日期').size()
+                result['程序Bug修复数'] = result.index.map(program_bugs_fixed).fillna(0).astype(int)
+                
+                # 统计非程序Bug数量
+                non_program_bugs = df_clean[df_clean['Bug类型'] == '非程序Bug'].groupby('日期').size()
+                result['非程序Bug数'] = result.index.map(non_program_bugs).fillna(0).astype(int)
+                
+                # 统计非程序Bug修复数量
+                non_program_bugs_fixed = df_clean[(df_clean['Bug类型'] == '非程序Bug') & (df_clean['修复状态'] == '已修复')].groupby('日期').size()
+                result['非程序Bug修复数'] = result.index.map(non_program_bugs_fixed).fillna(0).astype(int)
             
             # 显示结果
             print("\n" + "="*50)

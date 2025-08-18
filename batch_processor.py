@@ -132,27 +132,36 @@ class BatchProcessor(ExcelProcessor):
         try:
             analysis_file = self.output_folder / f"详细分析报告_{timestamp}.xlsx"
             
+            # 为详细分析报告添加新列
+            analysis_df = merged_df.copy()
+            
+            # 添加Bug类型列（默认：非程序Bug）
+            analysis_df['Bug类型'] = '非程序Bug'
+            
+            # 添加修复状态列（默认：未修复）
+            analysis_df['修复状态'] = '未修复'
+            
             with pd.ExcelWriter(analysis_file, engine='openpyxl') as writer:
                 # 完整数据（主工作表）
-                merged_df.to_excel(writer, sheet_name='完整数据', index=False)
+                analysis_df.to_excel(writer, sheet_name='完整数据', index=False)
                 
                 # 数据预览（前100行）
-                preview_df = merged_df.head(100)
+                preview_df = analysis_df.head(100)
                 preview_df.to_excel(writer, sheet_name='数据预览', index=False)
                 
                 # 缺失值分析
                 missing_data = pd.DataFrame({
-                    '列名': merged_df.columns,
-                    '缺失值数量': merged_df.isnull().sum().values,
-                    '缺失值比例': (merged_df.isnull().sum() / len(merged_df) * 100).round(2).values
+                    '列名': analysis_df.columns,
+                    '缺失值数量': analysis_df.isnull().sum().values,
+                    '缺失值比例': (analysis_df.isnull().sum() / len(analysis_df) * 100).round(2).values
                 })
                 missing_data.to_excel(writer, sheet_name='缺失值分析', index=False)
                 
                 # 数据类型信息
                 dtype_info = pd.DataFrame({
-                    '列名': merged_df.columns,
-                    '数据类型': merged_df.dtypes.astype(str).values,
-                    '非空值数量': merged_df.count().values
+                    '列名': analysis_df.columns,
+                    '数据类型': analysis_df.dtypes.astype(str).values,
+                    '非空值数量': analysis_df.count().values
                 })
                 dtype_info.to_excel(writer, sheet_name='数据类型', index=False)
                 
