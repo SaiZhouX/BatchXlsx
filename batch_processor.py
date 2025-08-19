@@ -4,13 +4,18 @@ from pathlib import Path
 import logging
 from datetime import datetime
 from excel_processor import ExcelProcessor
+from report_generator import ReportGenerator
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-class BatchProcessor(ExcelProcessor):
-    """批量处理Excel文件的类，继承自ExcelProcessor"""
+class BatchProcessor(ExcelProcessor, ReportGenerator):
+    """批量处理Excel文件的类，继承自ExcelProcessor和ReportGenerator"""
+    
+    def __init__(self, input_folder="input"):
+        ExcelProcessor.__init__(self, input_folder)
+        ReportGenerator.__init__(self)
     
     def read_all_files(self):
         """
@@ -61,58 +66,13 @@ class BatchProcessor(ExcelProcessor):
             logger.error(f"合并数据时出错: {str(e)}")
             return pd.DataFrame()
     
-    def clean_dataframe(self, df):
-        """
-        清理DataFrame，删除空列和无用列
-        
-        Args:
-            df (pd.DataFrame): 输入的DataFrame
-            
-        Returns:
-            pd.DataFrame: 清理后的DataFrame
-        """
-        if df.empty:
-            return df
-        
-        # 记录原始列数
-        original_cols = len(df.columns)
-        
-        # 1. 删除所有值都为空的列
-        df_cleaned = df.dropna(axis=1, how='all')
-        
-        # 2. 删除类似"Unnamed: X"的列
-        columns_to_drop = []
-        for col in df_cleaned.columns:
-            if isinstance(col, str) and col.startswith('Unnamed:'):
-                columns_to_drop.append(col)
-        
-        if columns_to_drop:
-            df_cleaned = df_cleaned.drop(columns=columns_to_drop)
-            logger.info(f"删除了无用列: {columns_to_drop}")
-        
-        # 3. 删除列名为空或只包含空白字符的列
-        columns_to_drop = []
-        for col in df_cleaned.columns:
-            if pd.isna(col) or (isinstance(col, str) and col.strip() == ''):
-                columns_to_drop.append(col)
-        
-        if columns_to_drop:
-            df_cleaned = df_cleaned.drop(columns=columns_to_drop)
-            logger.info(f"删除了空列名的列: {len(columns_to_drop)} 个")
-        
-        # 记录清理结果
-        cleaned_cols = len(df_cleaned.columns)
-        if original_cols != cleaned_cols:
-            logger.info(f"列清理完成: 原有 {original_cols} 列，清理后 {cleaned_cols} 列，删除了 {original_cols - cleaned_cols} 列")
-        
-        return df_cleaned
-    
-    def generate_reports(self, merged_df):
+    def generate_reports(self, merged_df, processed_files=None):
         """
         生成各种报告
         
         Args:
             merged_df (pd.DataFrame): 合并后的数据
+            processed_files (list): 处理的文件列表（可选）
         """
         if merged_df.empty:
             logger.warning("没有数据可以生成报告")
@@ -128,8 +88,8 @@ class BatchProcessor(ExcelProcessor):
             # 2. 生成数据统计报告
             self._generate_summary_report(merged_df, timestamp)
             
-            # 3. 生成详细分析报告
-            self._generate_analysis_report(merged_df, timestamp)
+            # 3. 生成统一格式的详细分析报告（使用共同的方法）
+            self._generate_unified_analysis_report(merged_df, timestamp, processed_files)
             
         except Exception as e:
             logger.error(f"生成报告时出错: {str(e)}")
@@ -171,53 +131,38 @@ class BatchProcessor(ExcelProcessor):
         except Exception as e:
             logger.error(f"生成统计报告时出错: {str(e)}")
     
-    def _generate_analysis_report(self, merged_df, timestamp):
+    def _generate_unified_analysis_report(self, merged_df, timestamp, processed_files=None):
         """
-        生成详细分析报告
+        生成统一格式的详细分析报告（使用共同的ReportGenerator方法）
         """
         try:
-            analysis_file = self.output_folder / f"详细分析报告_{timestamp}.xlsx"
+            # 清理DataFrame（使用共同的方法）
+            analysis_df = self.clean_data(merged_df.copy())
             
-            # 为详细分析报告添加新列
-            analysis_df = merged_df.copy()
+            # 添加默认的业务列（如果不存在）
+            if '类型' not in analysis_df.columns:
+                analysis_df['类型'] = '非程序Bug'
             
-            # 清理DataFrame，删除空列和无用列
-            analysis_df = self.clean_dataframe(analysis_df)
+            if '修复状态' not in analysis_df.columns:
+                analysis_df['修复状态'] = '未修复'
             
-            # 添加类型列（默认：非程序Bug）
-            analysis_df['类型'] = '非程序Bug'
+            # 生成统一格式的报告（使用共同的方法）
+            report_name = f"详细分析报告"
+            source_info = f"批量文件处理 ({len(processed_files) if processed_files else '未知'}个文件)"
             
-            # 添加修复状态列（默认：未修复）
-            analysis_df['修复状态'] = '未修复'
+            report_path = self.generate_unified_report(
+                df=analysis_df,
+                report_name=report_name,
+                source_info=source_info
+            )
             
-            with pd.ExcelWriter(analysis_file, engine='openpyxl') as writer:
-                # 完整数据（主工作表）
-                analysis_df.to_excel(writer, sheet_name='完整数据', index=False)
+            if report_path:
+                logger.info(f"已生成统一分析报告: {os.path.basename(report_path)}")
+            else:
+                logger.error("统一分析报告生成失败")
                 
-                # 数据预览（前100行）
-                preview_df = analysis_df.head(100)
-                preview_df.to_excel(writer, sheet_name='数据预览', index=False)
-                
-                # 缺失值分析
-                missing_data = pd.DataFrame({
-                    '列名': analysis_df.columns,
-                    '缺失值数量': analysis_df.isnull().sum().values,
-                    '缺失值比例': (analysis_df.isnull().sum() / len(analysis_df) * 100).round(2).values
-                })
-                missing_data.to_excel(writer, sheet_name='缺失值分析', index=False)
-                
-                # 数据类型信息
-                dtype_info = pd.DataFrame({
-                    '列名': analysis_df.columns,
-                    '数据类型': analysis_df.dtypes.astype(str).values,
-                    '非空值数量': analysis_df.count().values
-                })
-                dtype_info.to_excel(writer, sheet_name='数据类型', index=False)
-                
-            logger.info(f"已生成分析报告: {analysis_file}")
-            
         except Exception as e:
-            logger.error(f"生成分析报告时出错: {str(e)}")
+            logger.error(f"生成统一分析报告时出错: {str(e)}")
     
     def process(self):
         """
@@ -240,6 +185,7 @@ class BatchProcessor(ExcelProcessor):
             return
         
         # 3. 生成报告
-        self.generate_reports(merged_df)
+        processed_files = list(xlsx_files.keys())
+        self.generate_reports(merged_df, processed_files)
         
         logger.info("批量处理完成！")
