@@ -82,17 +82,24 @@ class SingleProcessor:
             
             # 创建Excel写入器
             with pd.ExcelWriter(report_path, engine='openpyxl') as writer:
+                # 生成数据统计（放在第一个工作表）
+                stats_data = self.generate_statistics(df, source_file_path)
+                stats_df = pd.DataFrame(list(stats_data.items()), columns=['统计项', '值'])
+                stats_df.to_excel(writer, sheet_name='分析摘要', index=False)
+                
                 # 写入清理后的数据
                 df.to_excel(writer, sheet_name='详细数据', index=False)
                 
-                # 生成数据统计
-                stats_data = self.generate_statistics(df, source_file_path)
-                stats_df = pd.DataFrame(list(stats_data.items()), columns=['统计项', '值'])
-                stats_df.to_excel(writer, sheet_name='数据统计', index=False)
+                # 如果数据量不大，添加数据预览
+                if len(df) <= 1000:
+                    preview_df = df.head(100)  # 显示前100行
+                    preview_df.to_excel(writer, sheet_name='数据预览', index=False)
                 
                 # 格式化工作表
+                self.format_worksheet(writer.sheets['分析摘要'], stats_df)
                 self.format_worksheet(writer.sheets['详细数据'], df)
-                self.format_worksheet(writer.sheets['数据统计'], stats_df)
+                if len(df) <= 1000:
+                    self.format_worksheet(writer.sheets['数据预览'], preview_df)
             
             self.logger.info(f"已生成详细分析报告: {report_filename}")
             return report_path
@@ -106,12 +113,16 @@ class SingleProcessor:
         stats = {}
         
         try:
+            # 添加报告标题
+            stats['=== Excel文件分析报告 ==='] = '='*30
+            stats[''] = ''  # 空行
+            
             # 基本统计
-            stats['源文件'] = os.path.basename(source_file_path)
+            stats['源文件名称'] = os.path.basename(source_file_path)
             stats['分析时间'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            stats['总行数'] = len(df)
-            stats['总列数'] = len(df.columns)
-            stats['非空行数'] = len(df.dropna(how='all'))
+            stats['数据总行数'] = len(df)
+            stats['数据总列数'] = len(df.columns)
+            stats['有效数据行数'] = len(df.dropna(how='all'))
             
             # 列统计
             stats['数值列数量'] = len(df.select_dtypes(include=['number']).columns)
@@ -122,7 +133,10 @@ class SingleProcessor:
             total_cells = len(df) * len(df.columns)
             empty_cells = df.isnull().sum().sum()
             stats['空值单元格数'] = empty_cells
-            stats['数据完整率'] = f"{((total_cells - empty_cells) / total_cells * 100):.1f}%"
+            if total_cells > 0:
+                stats['数据完整率'] = f"{((total_cells - empty_cells) / total_cells * 100):.1f}%"
+            else:
+                stats['数据完整率'] = "0.0%"
             
             # 如果有特定的业务列，进行业务统计
             self.add_business_statistics(df, stats)

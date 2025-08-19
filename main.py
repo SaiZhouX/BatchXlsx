@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import os
+import shutil
 import threading
 from pathlib import Path
 import pandas as pd
@@ -309,7 +310,6 @@ class ExcelAnalysisGUI:
                 
                 # 如果目标文件不存在，则复制
                 if not dst_path.exists():
-                    import shutil
                     shutil.copy2(src_path, dst_path)
             
             # 执行批量处理
@@ -338,7 +338,6 @@ class ExcelAnalysisGUI:
                 self.root.after(0, lambda file=str(latest_file): self.open_report_file(file))
             
             # 清理临时文件夹
-            import shutil
             shutil.rmtree(temp_input, ignore_errors=True)
             
             self.root.after(0, lambda: self.analysis_complete("分析完成！"))
@@ -376,19 +375,9 @@ class ExcelAnalysisGUI:
             # 对级别为空的数据给默认值
             df_clean[level_col] = df_clean[level_col].fillna('未分级')
             
-            # 筛选包含王超的数据进行调试
-            wangchao_data = df_clean[df_clean[source_col].str.contains('王超', na=False)]
-            self.log_message(f"王超相关数据行数: {len(wangchao_data)}")
-            
             # 从来源文件名中提取日期和测试人信息
             analyzer = BugAnalyzer()
             df_clean['文件名称'] = df_clean[source_col].apply(analyzer.extract_date_and_tester_from_filename)
-            
-            # 检查文件名称提取结果
-            wangchao_with_date = df_clean[df_clean[source_col].str.contains('王超', na=False)]
-            self.log_message(f"王超数据文件名称提取结果:")
-            for idx, row in wangchao_with_date.iterrows():
-                self.log_message(f"  文件: {row[source_col]} -> 文件名称: {row['文件名称']}")
             
             # 统计文件名称提取成功的数量
             filename_extracted = df_clean['文件名称'].notna().sum()
@@ -397,10 +386,6 @@ class ExcelAnalysisGUI:
             # 过滤掉无法提取文件名称的记录
             df_clean = df_clean.dropna(subset=['文件名称'])
             self.log_message(f"过滤无文件名称记录后行数: {len(df_clean)}")
-            
-            # 再次检查王超数据
-            wangchao_final = df_clean[df_clean[source_col].str.contains('王超', na=False)]
-            self.log_message(f"最终王超数据行数: {len(wangchao_final)}")
             
             # 处理级别名称，统一格式
             level_mapping = {
