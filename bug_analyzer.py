@@ -10,233 +10,330 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class BugAnalyzer(ExcelProcessor):
-    """Bug数据分析类，继承自ExcelProcessor"""
+    """Bug分析器类，继承自ExcelProcessor"""
     
-    def analyze_bug_levels(self, excel_file_path):
+    def __init__(self, input_folder="input", output_folder="output"):
+        super().__init__(input_folder, output_folder)
+        self.latest_report_file = None
+    
+    def find_latest_report(self):
         """
-        分析Excel文件中的Bug级别分布
-        按照日期统计S级、A级、B级、C级Bug的数量
+        查找最新的详细分析报告文件
         
-        Args:
-            excel_file_path (str): Excel文件路径
-            
         Returns:
-            pd.DataFrame: 按日期和级别统计的结果
+            Path: 最新报告文件的路径，如果没有找到则返回None
         """
         try:
-            # 读取Excel文件
-            df = pd.read_excel(excel_file_path)
+            # 查找所有详细分析报告文件
+            report_files = list(self.output_folder.glob("详细分析报告_*.xlsx"))
             
-            print(f"正在分析文件: {excel_file_path}")
-            print(f"数据总行数: {len(df)}")
-            print("\n数据列名:")
-            for i, col in enumerate(df.columns):
-                print(f"{i+1}. {col}")
-            
-            # 显示前几行数据以便了解结构
-            print("\n前5行数据预览:")
-            print(df.head())
-            
-            # 检查是否有来源文件列和级别相关的列
-            source_columns = [col for col in df.columns if any(keyword in col.lower() for keyword in ['来源', 'source', '文件', 'file'])]
-            level_columns = [col for col in df.columns if any(keyword in col.lower() for keyword in ['级别', 'level', '等级', 'priority', '严重', 'severity'])]
-            
-            print(f"\n检测到的来源相关列: {source_columns}")
-            print(f"检测到的级别相关列: {level_columns}")
-            
-            if not source_columns or not level_columns:
-                print("\n请手动指定来源列和级别列:")
-                print("可用的列:")
-                for i, col in enumerate(df.columns):
-                    print(f"{i}: {col}")
+            if not report_files:
+                logger.warning("没有找到详细分析报告文件")
                 return None
             
-            # 使用第一个检测到的来源列和级别列
-            source_col = source_columns[0]
-            level_col = level_columns[0]
+            # 按修改时间排序，获取最新的文件
+            latest_file = max(report_files, key=lambda x: x.stat().st_mtime)
+            self.latest_report_file = latest_file
             
-            print(f"\n使用来源列: {source_col}")
-            print(f"使用级别列: {level_col}")
+            logger.info(f"找到最新报告文件: {latest_file}")
+            return latest_file
             
-            # 数据预处理 - 只删除来源列为空的行，级别为空的给默认值
-            print(f"\n数据预处理前行数: {len(df)}")
-            df_clean = df.dropna(subset=[source_col])  # 只要求来源列不为空
+        except Exception as e:
+            logger.error(f"查找最新报告文件时出错: {str(e)}")
+            return None
+    
+    def read_report_data(self, report_file=None):
+        """
+        读取报告数据
+        
+        Args:
+            report_file (Path, optional): 报告文件路径，如果为None则使用最新的报告
             
-            # 对级别为空的数据给默认值
-            df_clean = df_clean.copy()  # 避免SettingWithCopyWarning
-            df_clean[level_col] = df_clean[level_col].fillna('未分级')
+        Returns:
+            pd.DataFrame: 报告数据
+        """
+        if report_file is None:
+            report_file = self.find_latest_report()
+        
+        if report_file is None:
+            logger.error("没有可用的报告文件")
+            return pd.DataFrame()
+        
+        try:
+            # 读取完整数据工作表
+            df = pd.read_excel(report_file, sheet_name='完整数据')
+            logger.info(f"成功读取报告数据，共 {len(df)} 行")
+            return df
             
-            print(f"数据预处理后行数: {len(df_clean)}")
+        except Exception as e:
+            logger.error(f"读取报告数据时出错: {str(e)}")
+            return pd.DataFrame()
+    
+    def analyze_by_date(self, df):
+        """
+        按日期分析Bug数据
+        
+        Args:
+            df (pd.DataFrame): 输入数据
             
-            # 统计级别分布
-            level_distribution = df_clean[level_col].value_counts()
-            print(f"\n级别分布统计:")
-            print(level_distribution)
+        Returns:
+            pd.DataFrame: 按日期统计的结果
+        """
+        if df.empty:
+            logger.warning("没有数据可以分析")
+            return pd.DataFrame()
+        
+        try:
+            # 确保有日期列
+            if '日期' not in df.columns:
+                logger.error("数据中没有找到'日期'列")
+                return pd.DataFrame()
             
-            # 从来源文件名中提取日期和测试人信息
-            df_clean['日期'] = df_clean[source_col].apply(self.extract_date_and_tester_from_filename)
+            # 清理数据
+            df_clean = df.dropna(subset=['日期'])
             
-            # 过滤掉无法提取日期的记录
-            df_clean = df_clean.dropna(subset=['日期'])
+            # 按日期分组统计
+            result = df_clean.groupby('日期').agg({
+                '日期': 'count'  # 统计每个日期的记录数
+            }).rename(columns={'日期': '总数'})
             
-            print(f"\n提取到的日期: {sorted(df_clean['日期'].unique())}")
-            
-            # 处理级别名称，统一格式
-            level_mapping = {
-                'S-严重': 'S级',
-                'A-重要': 'A级', 
-                'B-一般': 'B级',
-                'C-轻微': 'C级'
-            }
-            df_clean['级别'] = df_clean[level_col].map(level_mapping).fillna(df_clean[level_col])
-            
-            # 统计各级别Bug数量
-            result = df_clean.groupby(['日期', '级别']).size().unstack(fill_value=0)
-            
-            # 确保包含S、A、B、C级别的列
-            for level in ['S级', 'A级', 'B级', 'C级', '未分级']:
-                if level not in result.columns:
-                    result[level] = 0
-            
-            # 重新排序列
-            level_order = ['S级', 'A级', 'B级', 'C级', '未分级']
-            available_levels = [level for level in level_order if level in result.columns]
-            other_levels = [col for col in result.columns if col not in level_order]
-            
-            result = result[available_levels + other_levels]
-            
-            # 添加总计列
-            result['总计'] = result.sum(axis=1)
-            
-            # 如果数据中包含Bug类型和修复状态列，则添加额外的统计
-            if 'Bug类型' in df_clean.columns and '修复状态' in df_clean.columns:
+            # 如果数据中包含类型和修复状态列，则添加额外的统计
+            if '类型' in df_clean.columns and '修复状态' in df_clean.columns:
                 # 统计程序Bug数量
-                program_bugs = df_clean[df_clean['Bug类型'] == '程序Bug'].groupby('日期').size()
+                program_bugs = df_clean[df_clean['类型'] == '程序Bug'].groupby('日期').size()
                 result['程序Bug数'] = result.index.map(program_bugs).fillna(0).astype(int)
                 
                 # 统计程序Bug修复数量
-                program_bugs_fixed = df_clean[(df_clean['Bug类型'] == '程序Bug') & (df_clean['修复状态'] == '已修复')].groupby('日期').size()
+                program_bugs_fixed = df_clean[(df_clean['类型'] == '程序Bug') & (df_clean['修复状态'] == '已修复')].groupby('日期').size()
                 result['程序Bug修复数'] = result.index.map(program_bugs_fixed).fillna(0).astype(int)
                 
                 # 统计非程序Bug数量
-                non_program_bugs = df_clean[df_clean['Bug类型'] == '非程序Bug'].groupby('日期').size()
+                non_program_bugs = df_clean[df_clean['类型'] == '非程序Bug'].groupby('日期').size()
                 result['非程序Bug数'] = result.index.map(non_program_bugs).fillna(0).astype(int)
                 
                 # 统计非程序Bug修复数量
-                non_program_bugs_fixed = df_clean[(df_clean['Bug类型'] == '非程序Bug') & (df_clean['修复状态'] == '已修复')].groupby('日期').size()
+                non_program_bugs_fixed = df_clean[(df_clean['类型'] == '非程序Bug') & (df_clean['修复状态'] == '已修复')].groupby('日期').size()
                 result['非程序Bug修复数'] = result.index.map(non_program_bugs_fixed).fillna(0).astype(int)
+            else:
+                # 如果没有类型和修复状态列，则填充0
+                result['程序Bug数'] = 0
+                result['程序Bug修复数'] = 0
+                result['非程序Bug数'] = 0
+                result['非程序Bug修复数'] = 0
             
-            # 显示结果
-            print("\n" + "="*50)
-            print("Bug 级别分布")
-            print("="*50)
+            # 计算修复率
+            result['程序Bug修复率'] = (result['程序Bug修复数'] / result['程序Bug数'] * 100).fillna(0).round(2)
+            result['非程序Bug修复率'] = (result['非程序Bug修复数'] / result['非程序Bug数'] * 100).fillna(0).round(2)
             
-            # 创建格式化的表格
-            print(f"{'日期':<10}", end="")
-            for col in result.columns:
-                print(f"{col:<8}", end="")
-            print()
-            print("-" * (10 + len(result.columns) * 8))
+            # 重置索引，使日期成为一列
+            result = result.reset_index()
             
-            for date, row in result.iterrows():
-                print(f"{date:<10}", end="")
-                for value in row:
-                    print(f"{value:<8}", end="")
-                print()
-            
-            # 保存结果到output文件夹
-            output_file = os.path.join(self.output_folder, f"Bug级别分布统计_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
-            result.to_excel(output_file)
-            print(f"\n统计结果已保存到: {output_file}")
-            
+            logger.info(f"按日期分析完成，共 {len(result)} 个日期")
             return result
             
         except Exception as e:
-            print(f"分析过程中出现错误: {str(e)}")
-            return None
+            logger.error(f"按日期分析时出错: {str(e)}")
+            return pd.DataFrame()
+    
+    def analyze_by_type(self, df):
+        """
+        按类型分析Bug数据
+        
+        Args:
+            df (pd.DataFrame): 输入数据
+            
+        Returns:
+            pd.DataFrame: 按类型统计的结果
+        """
+        if df.empty:
+            logger.warning("没有数据可以分析")
+            return pd.DataFrame()
+        
+        try:
+            # 确保有类型列
+            if '类型' not in df.columns:
+                logger.warning("数据中没有找到'类型'列，使用默认分类")
+                df = df.copy()
+                df['类型'] = '非程序Bug'
+            
+            # 清理数据
+            df_clean = df.dropna(subset=['类型'])
+            
+            # 按类型分组统计
+            result = df_clean.groupby('类型').agg({
+                '类型': 'count'  # 统计每个类型的记录数
+            }).rename(columns={'类型': '总数'})
+            
+            # 如果有修复状态列，添加修复统计
+            if '修复状态' in df_clean.columns:
+                fixed_count = df_clean[df_clean['修复状态'] == '已修复'].groupby('类型').size()
+                result['已修复数'] = result.index.map(fixed_count).fillna(0).astype(int)
+                result['修复率'] = (result['已修复数'] / result['总数'] * 100).round(2)
+            else:
+                result['已修复数'] = 0
+                result['修复率'] = 0.0
+            
+            # 重置索引
+            result = result.reset_index()
+            
+            logger.info(f"按类型分析完成，共 {len(result)} 种类型")
+            return result
+            
+        except Exception as e:
+            logger.error(f"按类型分析时出错: {str(e)}")
+            return pd.DataFrame()
+    
+    def generate_bug_analysis_report(self, df=None):
+        """
+        生成Bug级别分析报告
+        
+        Args:
+            df (pd.DataFrame, optional): 输入数据，如果为None则从最新报告读取
+        """
+        try:
+            # 如果没有提供数据，则从最新报告读取
+            if df is None:
+                df = self.read_report_data()
+            
+            if df.empty:
+                logger.error("没有数据可以生成Bug分析报告")
+                return
+            
+            # 生成时间戳
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            # 创建报告文件
+            report_file = self.output_folder / f"Bug级别分析报告_{timestamp}.xlsx"
+            
+            with pd.ExcelWriter(report_file, engine='openpyxl') as writer:
+                # 按日期分析
+                date_analysis = self.analyze_by_date(df)
+                if not date_analysis.empty:
+                    date_analysis.to_excel(writer, sheet_name='按日期分析', index=False)
+                
+                # 按类型分析
+                type_analysis = self.analyze_by_type(df)
+                if not type_analysis.empty:
+                    type_analysis.to_excel(writer, sheet_name='按类型分析', index=False)
+                
+                # 原始数据（用于参考）
+                df.to_excel(writer, sheet_name='原始数据', index=False)
+                
+                # 生成汇总信息
+                summary_data = {
+                    '分析项目': [
+                        '总记录数',
+                        '分析日期数',
+                        '类型数量',
+                        '生成时间'
+                    ],
+                    '数值': [
+                        len(df),
+                        len(date_analysis) if not date_analysis.empty else 0,
+                        len(type_analysis) if not type_analysis.empty else 0,
+                        datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    ]
+                }
+                summary_df = pd.DataFrame(summary_data)
+                summary_df.to_excel(writer, sheet_name='分析汇总', index=False)
+            
+            logger.info(f"Bug级别分析报告已生成: {report_file}")
+            
+        except Exception as e:
+            logger.error(f"生成Bug分析报告时出错: {str(e)}")
     
     def extract_date_and_tester_from_filename(self, filename):
         """
-        从文件名中提取日期和测试人信息
+        从文件名中提取日期和测试人信息，返回格式为"月日_姓名"
         
         Args:
             filename (str): 文件名
             
         Returns:
-            str: 提取的日期和测试人信息
+            str: 提取的日期和姓名，格式为"0804_胡先美"，如果提取失败返回None
         """
-        date_str = self.extract_date_from_filename(filename)
-        tester_name = self.extract_tester_from_filename(filename)
+        import re
         
-        # 如果有测试人姓名，则组合日期和姓名
-        if date_str and tester_name:
-            return f"{date_str}_{tester_name}"
-        elif date_str:
-            return date_str
-        else:
+        if pd.isna(filename) or not isinstance(filename, str):
+            return None
+        
+        try:
+            # 提取日期模式：0804, 08-04, 8月4日等
+            date_patterns = [
+                r'(\d{4})',  # 4位数字如0804
+                r'(\d{1,2})-(\d{1,2})',  # 如08-04
+                r'(\d{1,2})月(\d{1,2})日?',  # 如8月4日
+                r'(\d{1,2})\.(\d{1,2})',  # 如8.4
+            ]
+            
+            extracted_date = None
+            extracted_name = None
+            
+            # 尝试提取日期
+            for pattern in date_patterns:
+                match = re.search(pattern, filename)
+                if match:
+                    if len(match.groups()) == 1:
+                        # 4位数字格式
+                        date_str = match.group(1)
+                        if len(date_str) == 4:
+                            extracted_date = date_str
+                            break
+                    elif len(match.groups()) == 2:
+                        # 月-日格式
+                        month = match.group(1).zfill(2)
+                        day = match.group(2).zfill(2)
+                        extracted_date = f"{month}{day}"
+                        break
+            
+            # 优先查找常见姓名（精确匹配）
+            common_names = ['胡先美', '王超', '李明', '张三', '李四', '王五', '赵六', '孙七']
+            for name in common_names:
+                if name in filename:
+                    extracted_name = name
+                    break
+            
+            # 如果没有找到常见姓名，使用正则表达式提取中文姓名
+            if not extracted_name:
+                # 查找文件名末尾的中文姓名（排除扩展名）
+                name_pattern = r'([一-龯]{2,4})(?:\.[^.]*)?$'
+                name_match = re.search(name_pattern, filename)
+                if name_match:
+                    potential_name = name_match.group(1)
+                    # 排除一些不太可能是姓名的词汇
+                    exclude_words = ['记录', '报告', '测试', '分析', '统计', '汇总', '名利场', '公司']
+                    if potential_name not in exclude_words:
+                        extracted_name = potential_name
+            
+            # 如果都提取成功，返回组合结果
+            if extracted_date and extracted_name:
+                return f"{extracted_date}_{extracted_name}"
+            
+            # 如果只有日期，尝试从文件名中找到可能的姓名
+            if extracted_date:
+                # 再次尝试查找姓名，使用更宽松的模式
+                name_pattern = r'([一-龯]{2,3})'
+                name_matches = re.findall(name_pattern, filename)
+                for name in name_matches:
+                    if name not in ['名利场', '记录', '测试', '报告', '分析']:
+                        return f"{extracted_date}_{name}"
+                
+                # 如果仍然找不到人名，默认使用"质检"
+                return f"{extracted_date}_质检"
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"提取文件名信息时出错: {filename}, 错误: {str(e)}")
             return None
     
-    def check_tester_data(self, tester_name, original_file, merged_file):
+    def process(self):
         """
-        检查特定测试人员的数据是否完整
+        执行Bug分析流程
+        """
+        logger.info("开始Bug级别分析...")
         
-        Args:
-            tester_name (str): 测试人员姓名
-            original_file (str): 原始文件路径
-            merged_file (str): 合并文件路径
-            
-        Returns:
-            bool: 数据是否完整
-        """
-        try:
-            print(f"检查{tester_name}数据完整性")
-            print("="*60)
-            
-            # 1. 检查原始文件
-            print(f"1. 原始文件检查: {original_file}")
-            
-            # 读取问题记录工作表
-            df_original = pd.read_excel(original_file, sheet_name='问题记录')
-            print(f"原始文件行数: {len(df_original)}")
-            
-            # 统计级别
-            level_counts = df_original['严重级别'].value_counts(dropna=False)
-            print(f"原始文件级别分布: {level_counts}")
-            print(f"原始文件总计: {level_counts.sum()}")
-            
-            # 2. 检查合并文件
-            print(f"\n2. 合并文件检查: {merged_file}")
-            
-            df_merged = pd.read_excel(merged_file)
-            df_tester = df_merged[df_merged['文件来源'].str.contains(tester_name, na=False)]
-            print(f"合并文件中{tester_name}行数: {len(df_tester)}")
-            
-            # 统计级别
-            merged_level_counts = df_tester['严重级别'].value_counts(dropna=False)
-            print(f"合并文件级别分布: {merged_level_counts}")
-            print(f"合并文件总计: {merged_level_counts.sum()}")
-            
-            # 3. 对比分析
-            print(f"\n3. 对比分析:")
-            print(f"原始文件: {level_counts.sum()}行")
-            print(f"合并文件: {merged_level_counts.sum()}行")
-            print(f"差异: {level_counts.sum() - merged_level_counts.sum()}行")
-            
-            if level_counts.sum() != merged_level_counts.sum():
-                print("❌ 数据有丢失!")
-                
-                # 详细对比每个级别
-                for level in level_counts.index:
-                    original_count = level_counts.get(level, 0)
-                    merged_count = merged_level_counts.get(level, 0)
-                    if original_count != merged_count:
-                        print(f"  {level}: 原始{original_count}个 -> 合并{merged_count}个 (差异: {original_count - merged_count})")
-                
-                return False
-            else:
-                print("✅ 数据完整!")
-                return True
-                
-        except Exception as e:
-            print(f"检查过程中出错: {str(e)}")
-            return False
+        # 生成Bug分析报告
+        self.generate_bug_analysis_report()
+        
+        logger.info("Bug级别分析完成！")

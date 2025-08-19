@@ -61,6 +61,52 @@ class BatchProcessor(ExcelProcessor):
             logger.error(f"合并数据时出错: {str(e)}")
             return pd.DataFrame()
     
+    def clean_dataframe(self, df):
+        """
+        清理DataFrame，删除空列和无用列
+        
+        Args:
+            df (pd.DataFrame): 输入的DataFrame
+            
+        Returns:
+            pd.DataFrame: 清理后的DataFrame
+        """
+        if df.empty:
+            return df
+        
+        # 记录原始列数
+        original_cols = len(df.columns)
+        
+        # 1. 删除所有值都为空的列
+        df_cleaned = df.dropna(axis=1, how='all')
+        
+        # 2. 删除类似"Unnamed: X"的列
+        columns_to_drop = []
+        for col in df_cleaned.columns:
+            if isinstance(col, str) and col.startswith('Unnamed:'):
+                columns_to_drop.append(col)
+        
+        if columns_to_drop:
+            df_cleaned = df_cleaned.drop(columns=columns_to_drop)
+            logger.info(f"删除了无用列: {columns_to_drop}")
+        
+        # 3. 删除列名为空或只包含空白字符的列
+        columns_to_drop = []
+        for col in df_cleaned.columns:
+            if pd.isna(col) or (isinstance(col, str) and col.strip() == ''):
+                columns_to_drop.append(col)
+        
+        if columns_to_drop:
+            df_cleaned = df_cleaned.drop(columns=columns_to_drop)
+            logger.info(f"删除了空列名的列: {len(columns_to_drop)} 个")
+        
+        # 记录清理结果
+        cleaned_cols = len(df_cleaned.columns)
+        if original_cols != cleaned_cols:
+            logger.info(f"列清理完成: 原有 {original_cols} 列，清理后 {cleaned_cols} 列，删除了 {original_cols - cleaned_cols} 列")
+        
+        return df_cleaned
+    
     def generate_reports(self, merged_df):
         """
         生成各种报告
@@ -135,8 +181,11 @@ class BatchProcessor(ExcelProcessor):
             # 为详细分析报告添加新列
             analysis_df = merged_df.copy()
             
-            # 添加Bug类型列（默认：非程序Bug）
-            analysis_df['Bug类型'] = '非程序Bug'
+            # 清理DataFrame，删除空列和无用列
+            analysis_df = self.clean_dataframe(analysis_df)
+            
+            # 添加类型列（默认：非程序Bug）
+            analysis_df['类型'] = '非程序Bug'
             
             # 添加修复状态列（默认：未修复）
             analysis_df['修复状态'] = '未修复'

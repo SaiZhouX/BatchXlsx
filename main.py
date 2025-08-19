@@ -137,13 +137,13 @@ class ExcelAnalysisGUI:
         table_frame = ttk.Frame(self.bug_stats_frame)
         table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # 创建Treeview表格 - 调整列顺序，将统计列移到日期后面
-        columns = ('日期', '总计', '程序Bug数', '程序Bug修复数', '非程序Bug数', '非程序Bug修复数', 'S级', 'A级', 'B级', 'C级', '未分级')
+        # 创建Treeview表格 - 调整列顺序，将统计列移到文件名称后面
+        columns = ('文件名称', '总计', '程序Bug数', '程序Bug修复数', '非程序Bug数', '非程序Bug修复数', 'S级', 'A级', 'B级', 'C级', '未分级')
         self.bug_tree = ttk.Treeview(table_frame, columns=columns, show='headings', height=15)
         
         # 设置列标题和列宽
         column_widths = {
-            '日期': 80,
+            '文件名称': 100,
             '总计': 60,
             '程序Bug数': 80,
             '程序Bug修复数': 90,
@@ -343,21 +343,21 @@ class ExcelAnalysisGUI:
             
             # 从来源文件名中提取日期和测试人信息
             analyzer = BugAnalyzer()
-            df_clean['日期'] = df_clean[source_col].apply(analyzer.extract_date_and_tester_from_filename)
+            df_clean['文件名称'] = df_clean[source_col].apply(analyzer.extract_date_and_tester_from_filename)
             
-            # 检查日期提取结果
+            # 检查文件名称提取结果
             wangchao_with_date = df_clean[df_clean[source_col].str.contains('王超', na=False)]
-            self.log_message(f"王超数据日期提取结果:")
+            self.log_message(f"王超数据文件名称提取结果:")
             for idx, row in wangchao_with_date.iterrows():
-                self.log_message(f"  文件: {row[source_col]} -> 日期: {row['日期']}")
+                self.log_message(f"  文件: {row[source_col]} -> 文件名称: {row['文件名称']}")
             
-            # 统计日期提取成功的数量
-            date_extracted = df_clean['日期'].notna().sum()
-            self.log_message(f"成功提取日期的行数: {date_extracted}")
+            # 统计文件名称提取成功的数量
+            filename_extracted = df_clean['文件名称'].notna().sum()
+            self.log_message(f"成功提取文件名称的行数: {filename_extracted}")
             
-            # 过滤掉无法提取日期的记录
-            df_clean = df_clean.dropna(subset=['日期'])
-            self.log_message(f"过滤无日期记录后行数: {len(df_clean)}")
+            # 过滤掉无法提取文件名称的记录
+            df_clean = df_clean.dropna(subset=['文件名称'])
+            self.log_message(f"过滤无文件名称记录后行数: {len(df_clean)}")
             
             # 再次检查王超数据
             wangchao_final = df_clean[df_clean[source_col].str.contains('王超', na=False)]
@@ -373,7 +373,7 @@ class ExcelAnalysisGUI:
             df_clean['级别'] = df_clean[level_col].map(level_mapping).fillna(df_clean[level_col])
             
             # 统计各级别Bug数量
-            result = df_clean.groupby(['日期', '级别']).size().unstack(fill_value=0)
+            result = df_clean.groupby(['文件名称', '级别']).size().unstack(fill_value=0)
             
             # 确保包含所有级别的列
             for level in ['S级', 'A级', 'B级', 'C级', '未分级']:
@@ -390,25 +390,25 @@ class ExcelAnalysisGUI:
             # 添加总计列
             result['总计'] = result.sum(axis=1)
             
-            # 如果数据中包含Bug类型和修复状态列，则添加额外的统计
-            if 'Bug类型' in df_clean.columns and '修复状态' in df_clean.columns:
+            # 如果数据中包含类型和修复状态列，则添加额外的统计
+            if '类型' in df_clean.columns and '修复状态' in df_clean.columns:
                 # 统计程序Bug数量
-                program_bugs = df_clean[df_clean['Bug类型'] == '程序Bug'].groupby('日期').size()
+                program_bugs = df_clean[df_clean['类型'] == '程序Bug'].groupby('文件名称').size()
                 result['程序Bug数'] = result.index.map(program_bugs).fillna(0).astype(int)
                 
                 # 统计程序Bug修复数量
-                program_bugs_fixed = df_clean[(df_clean['Bug类型'] == '程序Bug') & (df_clean['修复状态'] == '已修复')].groupby('日期').size()
+                program_bugs_fixed = df_clean[(df_clean['类型'] == '程序Bug') & (df_clean['修复状态'] == '已修复')].groupby('文件名称').size()
                 result['程序Bug修复数'] = result.index.map(program_bugs_fixed).fillna(0).astype(int)
                 
                 # 统计非程序Bug数量
-                non_program_bugs = df_clean[df_clean['Bug类型'] == '非程序Bug'].groupby('日期').size()
+                non_program_bugs = df_clean[df_clean['类型'] == '非程序Bug'].groupby('文件名称').size()
                 result['非程序Bug数'] = result.index.map(non_program_bugs).fillna(0).astype(int)
                 
                 # 统计非程序Bug修复数量
-                non_program_bugs_fixed = df_clean[(df_clean['Bug类型'] == '非程序Bug') & (df_clean['修复状态'] == '已修复')].groupby('日期').size()
+                non_program_bugs_fixed = df_clean[(df_clean['类型'] == '非程序Bug') & (df_clean['修复状态'] == '已修复')].groupby('文件名称').size()
                 result['非程序Bug修复数'] = result.index.map(non_program_bugs_fixed).fillna(0).astype(int)
             else:
-                # 如果没有Bug类型和修复状态列，则填充0
+                # 如果没有类型和修复状态列，则填充0
                 result['程序Bug数'] = 0
                 result['程序Bug修复数'] = 0
                 result['非程序Bug数'] = 0
@@ -433,10 +433,10 @@ class ExcelAnalysisGUI:
         total_bugs = 0
         level_totals = {}
         
-        for date, row in bug_stats.iterrows():
-            # 按新的列顺序填充数据：日期, 总计, 程序Bug数, 程序Bug修复数, 非程序Bug数, 非程序Bug修复数, S级, A级, B级, C级, 未分级
+        for filename, row in bug_stats.iterrows():
+            # 按新的列顺序填充数据：文件名称, 总计, 程序Bug数, 程序Bug修复数, 非程序Bug数, 非程序Bug修复数, S级, A级, B级, C级, 未分级
             values = [
-                date,
+                filename,
                 str(row.get('总计', 0)),
                 str(row.get('程序Bug数', 0)),
                 str(row.get('程序Bug修复数', 0)),
@@ -465,7 +465,7 @@ class ExcelAnalysisGUI:
             total_non_program_bugs = bug_stats['非程序Bug数'].sum() if '非程序Bug数' in bug_stats.columns else 0
             total_non_program_bugs_fixed = bug_stats['非程序Bug修复数'].sum() if '非程序Bug修复数' in bug_stats.columns else 0
             
-            # 按新的列顺序填充总计行：日期, 总计, 程序Bug数, 程序Bug修复数, 非程序Bug数, 非程序Bug修复数, S级, A级, B级, C级, 未分级
+            # 按新的列顺序填充总计行：文件名称, 总计, 程序Bug数, 程序Bug修复数, 非程序Bug数, 非程序Bug修复数, S级, A级, B级, C级, 未分级
             total_row = [
                 '总计',
                 str(total_bugs),
@@ -559,9 +559,8 @@ class ExcelAnalysisGUI:
         self.bug_analysis_button.config(state='normal')
         self.log_message(message)
         
-        if "完成" in message:
-            messagebox.showinfo("完成", message)
-        elif "错误" in message:
+        # 只显示错误提示框，取消完成提示框
+        if "错误" in message:
             messagebox.showerror("错误", message)
     
     def analysis_complete(self, message):
@@ -570,9 +569,8 @@ class ExcelAnalysisGUI:
         self.analyze_button.config(state='normal')
         self.log_message(message)
         
-        if "完成" in message:
-            messagebox.showinfo("完成", message)
-        elif "错误" in message:
+        # 只显示错误提示框，取消完成提示框
+        if "错误" in message:
             messagebox.showerror("错误", message)
 
 class GUILogHandler(logging.Handler):
