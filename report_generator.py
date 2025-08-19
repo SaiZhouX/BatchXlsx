@@ -1,239 +1,237 @@
 """
-报告生成器 - 提取单个分析和批量分析的共同功能
+报告生成器基类，提供统一的报告生成功能
 """
 import pandas as pd
-import os
 from pathlib import Path
-import logging
 from datetime import datetime
 
+from config_manager import config
+from logger_config import LoggerConfig
+from utils import DataUtils, ExcelUtils
+
 class ReportGenerator:
-    """报告生成器基类，包含单个分析和批量分析的共同功能"""
+    """报告生成器基类"""
     
-    def __init__(self, output_folder="output"):
-        self.output_folder = Path(output_folder)
+    def __init__(self):
+        self.output_folder = config.get_folder_path('output')
+        self.logger = LoggerConfig.get_logger(self.__class__.__name__)
+        
+        # 确保输出文件夹存在
         self.output_folder.mkdir(exist_ok=True)
-        self.logger = logging.getLogger(__name__)
     
     def clean_data(self, df):
         """
-        清理数据，删除无用列和空行
+        清理数据
         
         Args:
-            df (pd.DataFrame): 输入的DataFrame
+            df (pd.DataFrame): 原始数据
             
         Returns:
-            pd.DataFrame: 清理后的DataFrame
+            pd.DataFrame: 清理后的数据
         """
         if df.empty:
             return df
         
-        # 删除类似"Unnamed: X"的列
-        unnamed_cols = [col for col in df.columns if isinstance(col, str) and col.startswith('Unnamed:')]
-        if unnamed_cols:
-            df = df.drop(columns=unnamed_cols)
-            self.logger.info(f"删除了无用列: {unnamed_cols}")
-        
-        # 删除完全为空的行和列
-        df_cleaned = df.dropna(how='all')  # 只删除完全空的行
-        df_cleaned = df_cleaned.dropna(axis=1, how='all')  # 只删除完全空的列
-        
-        # 如果清理后数据为空，返回原始数据（去除Unnamed列）
-        if df_cleaned.empty:
-            df_cleaned = df.drop(columns=unnamed_cols) if unnamed_cols else df
-        
-        return df_cleaned
+        try:
+            original_shape = df.shape
+            
+            # 使用工具函数清理数据
+            df = DataUtils.remove_useless_columns(df)
+            df = DataUtils.clean_empty_rows(df)
+            
+            cleaned_shape = df.shape
+            self.logger.info(f"数据清理完成: 原有 {original_shape[0]} 行 {original_shape[1]} 列，"
+                           f"清理后 {cleaned_shape[0]} 行 {cleaned_shape[1]} 列")
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"数据清理时出错: {e}")
+            return df
     
-    def generate_unified_report(self, df, report_name, source_info=None, original_df=None, original_rows=None, original_cols=None):
+    def generate_statistics(self, df, source_info=None):
         """
-        生成统一格式的Excel分析报告（2个标签页）
+        生成统计数据
         
         Args:
-            df (pd.DataFrame): 清理后的数据
-            report_name (str): 报告名称
+            df (pd.DataFrame): 数据
             source_info (str): 数据源信息
-            original_df (pd.DataFrame): 原始数据（可选）
-            original_rows (int): 原始行数（可选）
-            original_cols (int): 原始列数（可选）
             
         Returns:
-            str: 生成的报告文件路径
+            list: 统计数据列表
         """
         try:
-            # 生成报告文件名
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            report_filename = f"{report_name}_{timestamp}.xlsx"
-            report_path = self.output_folder / report_filename
+            stats_data = []
             
-            with pd.ExcelWriter(report_path, engine='openpyxl') as writer:
-                # 第一个工作表：详细数据
-                self._write_detailed_data_sheet(writer, df, original_df, original_rows, original_cols)
-                
-                # 第二个工作表：分析统计
-                self._write_analysis_stats_sheet(writer, df, source_info, original_df, original_rows, original_cols)
-            
-            self.logger.info(f"已生成统一报告: {os.path.basename(report_path)}")
-            return str(report_path)
-            
-        except Exception as e:
-            self.logger.error(f"生成统一报告失败: {str(e)}")
-            return None
-    
-    def _write_detailed_data_sheet(self, writer, df, original_df=None, original_rows=None, original_cols=None):
-        """写入详细数据工作表"""
-        if not df.empty and len(df.columns) > 0:
-            df.to_excel(writer, sheet_name='详细数据', index=False)
-            self.logger.info(f"详细数据工作表: {len(df)} 行 {len(df.columns)} 列")
-        else:
-            # 如果数据为空，创建说明DataFrame
-            self.logger.warning("数据清理后为空，创建数据说明")
-            explanation_data = ['数据分析说明']
-            
-            if original_rows is not None and original_cols is not None:
-                explanation_data.extend([
-                    f'原始行数: {original_rows}',
-                    f'原始列数: {original_cols}'
-                ])
-            
-            if original_df is not None:
-                explanation_data.append(f'原始列名: {list(original_df.columns)}')
-            
-            explanation_data.extend([
-                '数据状态: 文件主要包含空值或索引列',
-                '建议: 请检查原始Excel文件是否包含有效数据'
-            ])
-            
-            df_explanation = pd.DataFrame({'数据说明': explanation_data})
-            df_explanation.to_excel(writer, sheet_name='详细数据', index=False)
-            self.logger.info(f"详细数据工作表: {len(df_explanation)} 行 {len(df_explanation.columns)} 列")
-    
-    def _write_analysis_stats_sheet(self, writer, df, source_info=None, original_df=None, original_rows=None, original_cols=None):
-        """写入分析统计工作表"""
-        stats_data = self._generate_analysis_stats(df, source_info, original_df, original_rows, original_cols)
-        stats_df = pd.DataFrame(stats_data, columns=['统计项', '值'])
-        stats_df.to_excel(writer, sheet_name='分析统计', index=False)
-    
-    def _generate_analysis_stats(self, df, source_info=None, original_df=None, original_rows=None, original_cols=None):
-        """生成分析统计数据"""
-        stats = []
-        
-        try:
             # 基本信息
-            stats.append(['', ''])  # 空行用于格式化
-            stats.append(['', ''])  # 空行用于格式化
-            
+            stats_data.append(['处理时间', datetime.now().strftime('%Y-%m-%d %H:%M:%S')])
             if source_info:
-                stats.append(['数据来源', source_info])
+                stats_data.append(['数据源', source_info])
             
-            stats.append(['分析时间', datetime.now().strftime('%Y-%m-%d %H:%M:%S')])
-            
-            # 原始数据信息（如果提供）
-            if original_rows is not None and original_cols is not None:
-                stats.append(['原始行数', original_rows])
-                stats.append(['原始列数', original_cols])
-            
-            # 当前数据信息
-            stats.append(['清理后行数', len(df)])
-            stats.append(['清理后列数', len(df.columns)])
+            # 数据规模
+            stats_data.append(['', ''])  # 空行分隔
+            stats_data.append(['=== 数据规模 ===', ''])
+            stats_data.append(['总行数', len(df)])
+            stats_data.append(['总列数', len(df.columns)])
             
             if not df.empty:
-                # 数据类型统计
-                numeric_cols = len(df.select_dtypes(include=['number']).columns)
-                text_cols = len(df.select_dtypes(include=['object']).columns)
-                date_cols = len(df.select_dtypes(include=['datetime']).columns)
-                
-                stats.append(['数值列数量', numeric_cols])
-                stats.append(['文本列数量', text_cols])
-                stats.append(['日期列数量', date_cols])
-                
                 # 数据质量
-                total_cells = len(df) * len(df.columns)
-                empty_cells = df.isnull().sum().sum()
+                stats_data.append(['', ''])
+                stats_data.append(['=== 数据质量 ===', ''])
                 
-                stats.append(['空值单元格数', empty_cells])
-                if total_cells > 0:
-                    stats.append(['数据完整率', f"{((total_cells - empty_cells) / total_cells * 100):.1f}%"])
-                else:
-                    stats.append(['数据完整率', '0.0%'])
+                # 缺失值统计
+                missing_counts = df.isnull().sum()
+                total_missing = missing_counts.sum()
+                stats_data.append(['总缺失值', total_missing])
                 
-                # 业务统计
-                self._add_business_statistics(df, stats)
-                
-                # 缺失值详情
-                missing_info = []
-                for col in df.columns:
-                    missing_count = df[col].isnull().sum()
-                    if missing_count > 0:
-                        missing_rate = (missing_count / len(df) * 100) if len(df) > 0 else 0
-                        missing_info.append(f'{col}: {missing_count}个 ({missing_rate:.1f}%)')
-                
-                if missing_info:
-                    stats.append(['缺失值详情', '; '.join(missing_info)])
-                else:
-                    stats.append(['缺失值详情', '无缺失值'])
-                
-                # 数据类型详情
-                type_info = []
-                for col in df.columns:
-                    dtype = str(df[col].dtype)
-                    non_null_count = df[col].count()
-                    type_info.append(f'{col}: {dtype} ({non_null_count}个非空值)')
-                
-                stats.append(['数据类型详情', '; '.join(type_info)])
-                
-                # 文件来源统计（批量处理特有）
-                if '文件来源' in df.columns:
-                    file_count = df['文件来源'].nunique()
-                    stats.append(['源文件数量', file_count])
+                if total_missing > 0:
+                    missing_rate = (total_missing / (len(df) * len(df.columns))) * 100
+                    stats_data.append(['缺失值比例', f'{missing_rate:.2f}%'])
                     
-                    # 显示前5个文件名
-                    file_sources = df['文件来源'].unique()[:5]
-                    stats.append(['源文件列表', '; '.join([str(f) for f in file_sources])])
-            else:
-                stats.append(['数据状态', '清理后数据为空'])
-                if original_df is not None:
-                    stats.append(['原始列名', str(list(original_df.columns))])
+                    # 各列缺失值详情
+                    stats_data.append(['', ''])
+                    stats_data.append(['各列缺失值详情', ''])
+                    for col, missing_count in missing_counts.items():
+                        if missing_count > 0:
+                            col_missing_rate = (missing_count / len(df)) * 100
+                            stats_data.append([f'  {col}', f'{missing_count} ({col_missing_rate:.1f}%)'])
+                
+                # 重复值统计
+                duplicate_count = df.duplicated().sum()
+                stats_data.append(['重复行数', duplicate_count])
+                if duplicate_count > 0:
+                    duplicate_rate = (duplicate_count / len(df)) * 100
+                    stats_data.append(['重复行比例', f'{duplicate_rate:.2f}%'])
+                
+                # 数据类型统计
+                stats_data.append(['', ''])
+                stats_data.append(['=== 数据类型 ===', ''])
+                type_counts = df.dtypes.value_counts()
+                for dtype, count in type_counts.items():
+                    stats_data.append([f'{dtype} 类型列数', count])
+                
+                # 业务统计（如果包含特定列）
+                business_stats = self._generate_business_statistics(df)
+                if business_stats:
+                    stats_data.extend(business_stats)
+            
+            return stats_data
             
         except Exception as e:
-            self.logger.error(f"生成统计数据失败: {str(e)}")
-            stats.append(['错误信息', str(e)])
-        
-        return stats
+            self.logger.error(f"生成统计数据时出错: {e}")
+            return [['错误', str(e)]]
     
-    def _add_business_statistics(self, df, stats):
-        """添加业务相关统计"""
+    def _generate_business_statistics(self, df):
+        """
+        生成业务相关统计
+        
+        Args:
+            df (pd.DataFrame): 数据
+            
+        Returns:
+            list: 业务统计数据
+        """
+        business_stats = []
+        
         try:
-            # 检查是否有Bug相关的列
-            bug_columns = [col for col in df.columns if any(keyword in col.lower() for keyword in ['bug', '缺陷', '问题', '错误'])]
-            if bug_columns:
-                stats.append(['Bug相关列数', len(bug_columns)])
+            # Bug相关统计
+            if '严重级别' in df.columns:
+                business_stats.append(['', ''])
+                business_stats.append(['=== Bug级别统计 ===', ''])
+                
+                severity_counts = df['严重级别'].value_counts()
+                for severity, count in severity_counts.items():
+                    percentage = (count / len(df)) * 100
+                    business_stats.append([severity, f'{count} ({percentage:.1f}%)'])
             
-            # 检查是否有级别相关的列
-            level_columns = [col for col in df.columns if any(keyword in col.lower() for keyword in ['级别', 'level', '等级', 'priority', '严重', 'severity'])]
-            if level_columns:
-                level_col = level_columns[0]
-                level_counts = df[level_col].value_counts()
-                for level, count in level_counts.items():
-                    if pd.notna(level):
-                        stats.append([f'{level}数量', count])
-            
-            # 检查是否有状态相关的列
-            status_columns = [col for col in df.columns if any(keyword in col.lower() for keyword in ['状态', 'status', '修复', 'fixed', '解决', 'resolved'])]
-            if status_columns:
-                status_col = status_columns[0]
-                status_counts = df[status_col].value_counts()
-                for status, count in status_counts.items():
-                    if pd.notna(status):
-                        stats.append([f'{status}数量', count])
-            
-            # 检查是否有类型相关的列
-            type_columns = [col for col in df.columns if any(keyword in col.lower() for keyword in ['类型', 'type', '分类', 'category'])]
-            if type_columns:
-                type_col = type_columns[0]
-                type_counts = df[type_col].value_counts()
+            if 'bug类型' in df.columns:
+                business_stats.append(['', ''])
+                business_stats.append(['=== Bug类型统计 ===', ''])
+                
+                type_counts = df['bug类型'].value_counts()
                 for bug_type, count in type_counts.items():
-                    if pd.notna(bug_type):
-                        stats.append([f'{bug_type}数量', count])
-                        
+                    percentage = (count / len(df)) * 100
+                    business_stats.append([bug_type, f'{count} ({percentage:.1f}%)'])
+            
+            if '修复状态' in df.columns:
+                business_stats.append(['', ''])
+                business_stats.append(['=== 修复状态统计 ===', ''])
+                
+                status_counts = df['修复状态'].value_counts()
+                for status, count in status_counts.items():
+                    percentage = (count / len(df)) * 100
+                    business_stats.append([status, f'{count} ({percentage:.1f}%)'])
+            
+            if '功能模块' in df.columns:
+                business_stats.append(['', ''])
+                business_stats.append(['=== 功能模块统计 ===', ''])
+                
+                module_counts = df['功能模块'].value_counts()
+                # 只显示前10个最多的模块
+                top_modules = module_counts.head(10)
+                for module, count in top_modules.items():
+                    percentage = (count / len(df)) * 100
+                    business_stats.append([module, f'{count} ({percentage:.1f}%)'])
+                
+                if len(module_counts) > 10:
+                    other_count = module_counts.tail(len(module_counts) - 10).sum()
+                    other_percentage = (other_count / len(df)) * 100
+                    business_stats.append(['其他模块', f'{other_count} ({other_percentage:.1f}%)'])
+            
         except Exception as e:
-            self.logger.error(f"添加业务统计失败: {str(e)}")
+            self.logger.error(f"生成业务统计时出错: {e}")
+        
+        return business_stats
+    
+    def generate_unified_report(self, df, report_name_prefix):
+        """
+        生成统一格式的Excel报告（2个标签页）
+        
+        Args:
+            df (pd.DataFrame): 数据
+            report_name_prefix (str): 报告名称前缀
+            
+        Returns:
+            Path: 生成的报告文件路径
+        """
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            report_filename = f"详细分析报告_{report_name_prefix}_{timestamp}.xlsx"
+            report_path = self.output_folder / report_filename
+            
+            sheets_data = {}
+            
+            # 第一个标签页：详细数据
+            if not df.empty and len(df.columns) > 0:
+                sheets_data['详细数据'] = df
+                self.logger.info(f"详细数据工作表: {len(df)} 行 {len(df.columns)} 列")
+            else:
+                # 如果数据为空，创建说明DataFrame
+                empty_data = pd.DataFrame({
+                    '数据说明': [
+                        '数据处理结果',
+                        f'处理时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}',
+                        '数据状态: 处理后数据为空',
+                        '可能原因: 原始文件无有效数据或数据被过滤',
+                        '建议: 请检查原始文件是否包含有效数据'
+                    ]
+                })
+                sheets_data['详细数据'] = empty_data
+                self.logger.warning("数据为空，创建说明工作表")
+            
+            # 第二个标签页：分析统计
+            stats_data = self.generate_statistics(df, report_name_prefix)
+            stats_df = pd.DataFrame(stats_data, columns=['统计项', '值'])
+            sheets_data['分析统计'] = stats_df
+            
+            # 保存Excel文件
+            if ExcelUtils.save_excel_with_sheets(str(report_path), sheets_data):
+                self.logger.info(f"已生成统一报告: {report_filename}")
+                return report_path
+            else:
+                self.logger.error(f"保存统一报告失败: {report_filename}")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"生成统一报告时出错: {e}")
+            return None

@@ -1,69 +1,96 @@
-import pandas as pd
-import os
+"""
+批量文件处理器，继承自ReportGenerator
+"""
+import shutil
 from pathlib import Path
-import logging
 from datetime import datetime
-from excel_processor import ExcelProcessor
+
 from report_generator import ReportGenerator
+from config_manager import config
+from logger_config import LoggerConfig
+from utils import FileUtils, DataUtils, ExcelUtils
 
-# 配置日志
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-class BatchProcessor(ExcelProcessor, ReportGenerator):
-    """批量处理Excel文件的类，继承自ExcelProcessor和ReportGenerator"""
+class BatchProcessor(ReportGenerator):
+    """批量文件处理器，继承自ReportGenerator"""
     
-    def __init__(self, input_folder="input"):
-        ExcelProcessor.__init__(self, input_folder)
-        ReportGenerator.__init__(self)
+    def __init__(self, input_folder=None):
+        super().__init__()
+        self.input_folder = config.get_folder_path('input') if input_folder is None else Path(input_folder)
+        self.logger = LoggerConfig.get_logger(self.__class__.__name__)
     
     def read_all_files(self):
         """
         读取所有Excel文件
         
         Returns:
-            dict: 文件名和DataFrame的字典
+            dict: 文件名到DataFrame的映射
         """
-        xlsx_files = {}
+        xlsx_files = FileUtils.get_excel_files(str(self.input_folder))
         
-        # 获取所有xlsx文件路径
-        file_paths = self.get_input_xlsx_files()
+        if not xlsx_files:
+            self.logger.warning(f"在 {self.input_folder} 中没有找到Excel文件")
+            return {}
         
-        if not file_paths:
-            logger.warning("没有找到可处理的Excel文件")
-            return xlsx_files
+        file_data = {}
         
-        # 读取每个文件
-        for file_path in file_paths:
-            df = self.read_excel_file(file_path)
-            if not df.empty:
-                xlsx_files[file_path.name] = df
+        for file_path in xlsx_files:
+            try:
+                df = ExcelUtils.read_excel_smart(str(file_path))
+                
+                if not df.empty:
+                    # 清理数据
+                    df = self.clean_data(df)
+                    
+                    if not df.empty:
+                        # 添加元数据
+                        df = DataUtils.add_metadata_columns(df, str(file_path))
+                        file_data[file_path.name] = df
+                        self.logger.info(f"成功处理文件: {file_path.name}, {len(df)} 行数据")
+                    else:
+                        self.logger.warning(f"文件 {file_path.name} 清理后为空")
+                else:
+                    self.logger.warning(f"文件 {file_path.name} 读取为空")
+                    
+            except Exception as e:
+                self.logger.error(f"处理文件 {file_path.name} 时出错: {e}")
         
-        return xlsx_files
+        self.logger.info(f"成功读取 {len(file_data)} 个文件")
+        return file_data
     
-    def merge_data(self, xlsx_files):
+    def merge_data(self, file_data_dict):
         """
-        合并所有Excel文件的数据
+        合并多个文件的数据
         
         Args:
-            xlsx_files (dict): 文件名和DataFrame的字典
+            file_data_dict (dict): 文件名到DataFrame的映射
             
         Returns:
             pd.DataFrame: 合并后的数据
         """
-        if not xlsx_files:
-            logger.warning("没有数据可以合并")
+        if not file_data_dict:
+            self.logger.warning("没有数据可以合并")
+            import pandas as pd
             return pd.DataFrame()
-            
+        
         try:
-            # 合并所有DataFrame
-            merged_df = pd.concat(xlsx_files.values(), ignore_index=True)
-            logger.info(f"成功合并数据，总计 {len(merged_df)} 行")
+            # 合并所有数据
+            all_dataframes = list(file_data_dict.values())
+            
+            # 使用concat合并，忽略索引
+            import pandas as pd
+            merged_df = pd.concat(all_dataframes, ignore_index=True, sort=False)
+            
+            self.logger.info(f"成功合并数据，总计 {len(merged_df)} 行")
+            
+            # 记录每个文件的数据行数
+            for filename, df in file_data_dict.items():
+                self.logger.info(f"  {filename}: {len(df)} 行")
             
             return merged_df
             
         except Exception as e:
-            logger.error(f"合并数据时出错: {str(e)}")
+            self.logger.error(f"合并数据时出错: {e}")
+            import pandas as pd
             return pd.DataFrame()
     
     def generate_reports(self, merged_df, processed_files=None):
@@ -72,120 +99,126 @@ class BatchProcessor(ExcelProcessor, ReportGenerator):
         
         Args:
             merged_df (pd.DataFrame): 合并后的数据
-            processed_files (list): 处理的文件列表（可选）
+            processed_files (list): 处理的文件列表
         """
         if merged_df.empty:
-            logger.warning("没有数据可以生成报告")
+            self.logger.warning("没有数据可以生成报告")
             return
-            
+        
         try:
-            # 生成时间戳
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             
-            # 1. 生成合并后的完整数据文件
-            self.save_to_excel(merged_df, f"合并数据_{timestamp}.xlsx")
+            # 1. 保存合并数据
+            merged_filename = f"合并数据_{timestamp}.xlsx"
+            merged_path = self.output_folder / merged_filename
             
-            # 2. 生成数据统计报告
-            self._generate_summary_report(merged_df, timestamp)
+            if ExcelUtils.save_excel_with_sheets(str(merged_path), {'合并数据': merged_df}):
+                self.logger.info(f"已保存数据到: {merged_filename}")
             
-            # 3. 生成统一格式的详细分析报告（使用共同的方法）
-            self._generate_unified_analysis_report(merged_df, timestamp, processed_files)
+            # 2. 生成统计报告
+            stats_filename = f"数据统计报告_{timestamp}.xlsx"
+            stats_path = self.output_folder / stats_filename
+            
+            stats_data = self._generate_statistics_report(merged_df, processed_files)
+            if ExcelUtils.save_excel_with_sheets(str(stats_path), {'统计数据': stats_data}):
+                self.logger.info(f"已生成统计报告: {stats_filename}")
+            
+            # 3. 生成统一分析报告
+            unified_report_path = self.generate_unified_report(merged_df, f"批量分析_{timestamp}")
+            
+            if unified_report_path:
+                self.logger.info(f"已生成统一分析报告: {unified_report_path.name}")
             
         except Exception as e:
-            logger.error(f"生成报告时出错: {str(e)}")
+            self.logger.error(f"生成报告时出错: {e}")
     
-    def _generate_summary_report(self, merged_df, timestamp):
+    def _generate_statistics_report(self, merged_df, processed_files):
         """
-        生成数据统计摘要报告
+        生成统计报告数据
+        
+        Args:
+            merged_df (pd.DataFrame): 合并后的数据
+            processed_files (list): 处理的文件列表
+            
+        Returns:
+            pd.DataFrame: 统计数据
+        """
+        import pandas as pd
+        
+        try:
+            stats_data = []
+            
+            # 基本统计
+            stats_data.append(['处理时间', datetime.now().strftime('%Y-%m-%d %H:%M:%S')])
+            stats_data.append(['处理文件数', len(processed_files) if processed_files else 0])
+            stats_data.append(['总数据行数', len(merged_df)])
+            stats_data.append(['总数据列数', len(merged_df.columns)])
+            
+            # 文件来源统计
+            if '文件来源' in merged_df.columns:
+                source_counts = merged_df['文件来源'].value_counts()
+                stats_data.append(['', ''])  # 空行分隔
+                stats_data.append(['文件来源统计', ''])
+                for source, count in source_counts.items():
+                    stats_data.append([f'  {source}', count])
+            
+            # 数据质量统计
+            stats_data.append(['', ''])  # 空行分隔
+            stats_data.append(['数据质量统计', ''])
+            
+            # 缺失值统计
+            missing_counts = merged_df.isnull().sum()
+            total_missing = missing_counts.sum()
+            stats_data.append(['总缺失值数', total_missing])
+            
+            if total_missing > 0:
+                stats_data.append(['缺失值详情', ''])
+                for col, missing_count in missing_counts.items():
+                    if missing_count > 0:
+                        missing_rate = (missing_count / len(merged_df)) * 100
+                        stats_data.append([f'  {col}', f'{missing_count} ({missing_rate:.1f}%)'])
+            
+            # 重复值统计
+            duplicate_count = merged_df.duplicated().sum()
+            stats_data.append(['重复行数', duplicate_count])
+            
+            return pd.DataFrame(stats_data, columns=['统计项', '值'])
+            
+        except Exception as e:
+            self.logger.error(f"生成统计报告数据时出错: {e}")
+            return pd.DataFrame({'统计项': ['错误'], '值': [str(e)]})
+    
+    def process_batch(self):
+        """
+        执行批量处理流程
+        
+        Returns:
+            bool: 处理是否成功
         """
         try:
-            summary_file = self.output_folder / f"数据统计报告_{timestamp}.xlsx"
+            self.logger.info("开始批量处理...")
             
-            with pd.ExcelWriter(summary_file, engine='openpyxl') as writer:
-                # 基本统计信息
-                basic_stats = pd.DataFrame({
-                    '统计项目': ['总行数', '总列数', '文件数量', '处理时间'],
-                    '数值': [
-                        len(merged_df),
-                        len(merged_df.columns),
-                        merged_df['文件来源'].nunique() if '文件来源' in merged_df.columns else 0,
-                        datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    ]
-                })
-                basic_stats.to_excel(writer, sheet_name='基本统计', index=False)
-                
-                # 按文件来源统计
-                if '文件来源' in merged_df.columns:
-                    file_stats = merged_df['文件来源'].value_counts().reset_index()
-                    file_stats.columns = ['文件名', '行数']
-                    file_stats.to_excel(writer, sheet_name='文件统计', index=False)
-                
-                # 数值列统计（如果存在）
-                numeric_cols = merged_df.select_dtypes(include=['number']).columns
-                if len(numeric_cols) > 0:
-                    numeric_stats = merged_df[numeric_cols].describe()
-                    numeric_stats.to_excel(writer, sheet_name='数值统计')
-                
-            logger.info(f"已生成统计报告: {summary_file}")
+            # 1. 读取所有文件
+            file_data = self.read_all_files()
+            
+            if not file_data:
+                self.logger.error("没有找到可处理的文件")
+                return False
+            
+            # 2. 合并数据
+            merged_df = self.merge_data(file_data)
+            
+            if merged_df.empty:
+                self.logger.error("数据合并失败")
+                return False
+            
+            # 3. 生成报告
+            processed_files = list(file_data.keys())
+            self.generate_reports(merged_df, processed_files)
+            
+            self.logger.info("批量处理完成！")
+            return True
             
         except Exception as e:
-            logger.error(f"生成统计报告时出错: {str(e)}")
-    
-    def _generate_unified_analysis_report(self, merged_df, timestamp, processed_files=None):
-        """
-        生成统一格式的详细分析报告（使用共同的ReportGenerator方法）
-        """
-        try:
-            # 清理DataFrame（使用共同的方法）
-            analysis_df = self.clean_data(merged_df.copy())
-            
-            # 添加默认的业务列（如果不存在）
-            if '类型' not in analysis_df.columns:
-                analysis_df['类型'] = '非程序Bug'
-            
-            if '修复状态' not in analysis_df.columns:
-                analysis_df['修复状态'] = '未修复'
-            
-            # 生成统一格式的报告（使用共同的方法）
-            report_name = f"详细分析报告"
-            source_info = f"批量文件处理 ({len(processed_files) if processed_files else '未知'}个文件)"
-            
-            report_path = self.generate_unified_report(
-                df=analysis_df,
-                report_name=report_name,
-                source_info=source_info
-            )
-            
-            if report_path:
-                logger.info(f"已生成统一分析报告: {os.path.basename(report_path)}")
-            else:
-                logger.error("统一分析报告生成失败")
-                
-        except Exception as e:
-            logger.error(f"生成统一分析报告时出错: {str(e)}")
-    
-    def process(self):
-        """
-        执行完整的批量处理流程
-        """
-        logger.info("开始批量处理Excel文件...")
-        
-        # 1. 读取所有xlsx文件
-        xlsx_files = self.read_all_files()
-        
-        if not xlsx_files:
-            logger.error("没有找到可处理的文件，程序结束")
-            return
-        
-        # 2. 合并数据
-        merged_df = self.merge_data(xlsx_files)
-        
-        if merged_df.empty:
-            logger.error("数据合并失败，程序结束")
-            return
-        
-        # 3. 生成报告
-        processed_files = list(xlsx_files.keys())
-        self.generate_reports(merged_df, processed_files)
-        
-        logger.info("批量处理完成！")
+            self.logger.error(f"批量处理过程中出错: {e}")
+            return False

@@ -1,70 +1,93 @@
-import pandas as pd
-import os
+"""
+单个文件处理器，继承自ReportGenerator
+"""
 from pathlib import Path
-import logging
-from datetime import datetime
-from excel_processor import ExcelProcessor
-from report_generator import ReportGenerator
 
-class SingleProcessor(ExcelProcessor, ReportGenerator):
-    """单个Excel文件处理器，继承自ExcelProcessor和ReportGenerator"""
+from report_generator import ReportGenerator
+from config_manager import config
+from logger_config import LoggerConfig
+from utils import DataUtils, ExcelUtils
+
+class SingleProcessor(ReportGenerator):
+    """单个文件处理器，继承自ReportGenerator"""
     
     def __init__(self):
-        ExcelProcessor.__init__(self)
-        ReportGenerator.__init__(self)
-        self.logger = logging.getLogger(__name__)
+        super().__init__()
+        self.logger = LoggerConfig.get_logger(self.__class__.__name__)
     
     def process_single_file(self, file_path):
         """
-        处理单个Excel文件并生成详细分析报告
+        处理单个Excel文件
         
         Args:
-            file_path (str): Excel文件路径
+            file_path (str): 文件路径
             
         Returns:
-            str: 生成的报告文件路径，如果失败返回None
+            str: 生成的报告文件路径，失败时返回None
         """
         try:
-            self.logger.info(f"开始处理文件: {os.path.basename(file_path)}")
+            self.logger.info(f"开始处理文件: {Path(file_path).name}")
             
-            # 读取Excel文件
-            df = self.read_excel_file(Path(file_path))
+            # 读取文件
+            df = ExcelUtils.read_excel_smart(file_path)
+            
             if df.empty:
-                self.logger.error(f"文件读取失败或为空: {file_path}")
+                self.logger.error("文件读取失败或文件为空")
                 return None
-            
-            # 保存原始数据信息
-            original_df = df.copy()
-            original_rows = len(df)
-            original_cols = len(df.columns)
             
             self.logger.info(f"成功读取文件，共 {len(df)} 行数据")
             
-            # 清理数据（使用共同的方法）
+            # 清理数据
+            original_df = df.copy()
+            original_rows, original_cols = df.shape
+            
             df = self.clean_data(df)
-            self.logger.info(f"数据清理完成: 原有 {original_rows} 行 {original_cols} 列，清理后 {len(df)} 行 {len(df.columns)} 列")
             
-            # 生成统一格式的报告（使用共同的方法）
-            base_name = Path(file_path).stem
-            report_name = f"详细分析报告_{base_name}"
-            source_info = os.path.basename(file_path)
+            # 如果清理后数据为空，创建说明数据
+            if df.empty or len(df.columns) == 0:
+                self.logger.warning("数据清理后为空，创建数据说明")
+                df = self._create_empty_data_explanation(original_df, original_rows, original_cols)
             
-            report_path = self.generate_unified_report(
-                df=df,
-                report_name=report_name,
-                source_info=source_info,
-                original_df=original_df,
-                original_rows=original_rows,
-                original_cols=original_cols
-            )
+            # 添加元数据
+            df = DataUtils.add_metadata_columns(df, file_path)
+            
+            # 生成报告
+            report_path = self.generate_unified_report(df, Path(file_path).stem)
             
             if report_path:
-                self.logger.info(f"单个文件分析完成: {os.path.basename(file_path)}")
-                return report_path
+                self.logger.info(f"单个文件分析完成: {Path(file_path).name}")
+                return str(report_path)
             else:
                 self.logger.error("报告生成失败")
                 return None
                 
         except Exception as e:
-            self.logger.error(f"处理文件时出错: {str(e)}")
+            self.logger.error(f"处理单个文件时出错: {e}")
             return None
+    
+    def _create_empty_data_explanation(self, original_df, original_rows, original_cols):
+        """
+        创建空数据说明
+        
+        Args:
+            original_df (pd.DataFrame): 原始数据
+            original_rows (int): 原始行数
+            original_cols (int): 原始列数
+            
+        Returns:
+            pd.DataFrame: 说明数据
+        """
+        import pandas as pd
+        
+        explanation_data = {
+            '数据说明': [
+                '原始文件数据分析',
+                f'原始行数: {original_rows}',
+                f'原始列数: {original_cols}',
+                f'原始列名: {list(original_df.columns)}',
+                '数据状态: 文件主要包含空值或索引列',
+                '建议: 请检查原始Excel文件是否包含有效数据'
+            ]
+        }
+        
+        return pd.DataFrame(explanation_data)
