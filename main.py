@@ -11,6 +11,7 @@ import logging
 from batch_processor import BatchProcessor
 from bug_analyzer import BugAnalyzer
 from data_validator import DataValidator
+from single_processor import SingleProcessor
 
 class ExcelAnalysisGUI:
     def __init__(self, root):
@@ -20,6 +21,8 @@ class ExcelAnalysisGUI:
         
         # 存储文件列表
         self.file_list = []
+        # 标记是否为单个文件模式
+        self.single_file_mode = False
         
         # 创建界面
         self.create_widgets()
@@ -249,13 +252,49 @@ class ExcelAnalysisGUI:
         # 清空之前的结果
         self.clear_bug_stats()
         
-        # 在新线程中执行分析
-        analysis_thread = threading.Thread(target=self.perform_analysis)
-        analysis_thread.daemon = True
-        analysis_thread.start()
+        # 判断是单个文件还是批量文件处理
+        if len(self.file_list) == 1:
+            self.single_file_mode = True
+            # 在新线程中执行单个文件分析
+            analysis_thread = threading.Thread(target=self.perform_single_analysis)
+            analysis_thread.daemon = True
+            analysis_thread.start()
+        else:
+            self.single_file_mode = False
+            # 在新线程中执行批量分析
+            analysis_thread = threading.Thread(target=self.perform_analysis)
+            analysis_thread.daemon = True
+            analysis_thread.start()
     
+    def perform_single_analysis(self):
+        """执行单个文件分析（在后台线程中运行）"""
+        try:
+            self.log_message("开始分析单个Excel文件...")
+            
+            # 获取单个文件路径
+            file_path = self.file_list[0]
+            
+            # 创建单个文件处理器
+            processor = SingleProcessor()
+            
+            # 处理单个文件
+            report_path = processor.process_single_file(file_path)
+            
+            if not report_path:
+                self.root.after(0, lambda: self.analysis_complete("单个文件分析失败"))
+                return
+            
+            # 在主线程中打开详细分析报告
+            self.root.after(0, lambda file=str(report_path): self.open_report_file(file))
+            
+            self.root.after(0, lambda: self.analysis_complete("单个文件分析完成！"))
+            
+        except Exception as e:
+            error_msg = f"单个文件分析过程中出现错误: {str(e)}"
+            self.root.after(0, lambda: self.analysis_complete(error_msg))
+
     def perform_analysis(self):
-        """执行分析（在后台线程中运行）"""
+        """执行批量分析（在后台线程中运行）"""
         try:
             self.log_message("开始分析Excel文件...")
             
