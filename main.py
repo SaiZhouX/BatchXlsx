@@ -545,6 +545,10 @@ class ExcelAnalysisGUI:
             # 执行Bug级别分析
             bug_stats = self.analyze_bug_levels_for_gui(report_file_path)
             
+            # 生成Bug级别分析报告
+            if bug_stats is not None:
+                self.generate_bug_analysis_report(bug_stats, report_file_path)
+            
             # 在主线程中更新GUI
             self.root.after(0, lambda: self.update_bug_stats(bug_stats))
             self.root.after(0, lambda: self.bug_analysis_complete("Bug级别分析完成！"))
@@ -553,6 +557,122 @@ class ExcelAnalysisGUI:
             error_msg = f"Bug级别分析过程中出现错误: {str(e)}"
             self.root.after(0, lambda: self.bug_analysis_complete(error_msg))
     
+    def generate_bug_analysis_report(self, bug_stats, source_file_path):
+        """生成Bug级别分析报告"""
+        try:
+            # 确保output目录存在
+            output_dir = Path("output")
+            output_dir.mkdir(exist_ok=True)
+            
+            # 生成报告文件名
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            report_filename = f"Bug级别分析报告_{timestamp}.xlsx"
+            report_path = output_dir / report_filename
+            
+            # 创建Excel写入器
+            with pd.ExcelWriter(report_path, engine='openpyxl') as writer:
+                # 写入Bug统计数据
+                bug_stats_df = bug_stats.reset_index()
+                bug_stats_df.to_excel(writer, sheet_name='Bug级别统计', index=False)
+                
+                # 获取工作表对象进行格式化
+                worksheet = writer.sheets['Bug级别统计']
+                
+                # 设置列宽
+                column_widths = {
+                    'A': 25,  # 文件名称
+                    'B': 10,  # 总计
+                    'C': 12,  # 程序Bug数
+                    'D': 15,  # 程序Bug修复数
+                    'E': 15,  # 非程序Bug数
+                    'F': 18,  # 非程序Bug修复数
+                    'G': 8,   # S级
+                    'H': 8,   # A级
+                    'I': 8,   # B级
+                    'J': 8,   # C级
+                    'K': 10   # 未分级
+                }
+                
+                for col, width in column_widths.items():
+                    worksheet.column_dimensions[col].width = width
+                
+                # 添加总计行（如果有多个文件）
+                if len(bug_stats) > 1:
+                    total_row = len(bug_stats) + 2  # +2 因为有标题行和从1开始计数
+                    
+                    # 计算各列总计
+                    worksheet[f'A{total_row}'] = '总计'
+                    worksheet[f'B{total_row}'] = bug_stats['总计'].sum()
+                    worksheet[f'C{total_row}'] = bug_stats['程序Bug数'].sum() if '程序Bug数' in bug_stats.columns else 0
+                    worksheet[f'D{total_row}'] = bug_stats['程序Bug修复数'].sum() if '程序Bug修复数' in bug_stats.columns else 0
+                    worksheet[f'E{total_row}'] = bug_stats['非程序Bug数'].sum() if '非程序Bug数' in bug_stats.columns else 0
+                    worksheet[f'F{total_row}'] = bug_stats['非程序Bug修复数'].sum() if '非程序Bug修复数' in bug_stats.columns else 0
+                    
+                    # 计算各级别总计
+                    for col_idx, level in enumerate(['S级', 'A级', 'B级', 'C级', '未分级'], start=7):
+                        col_letter = chr(ord('A') + col_idx)
+                        worksheet[f'{col_letter}{total_row}'] = bug_stats[level].sum() if level in bug_stats.columns else 0
+                    
+                    # 设置总计行样式
+                    from openpyxl.styles import Font, PatternFill
+                    bold_font = Font(bold=True)
+                    gray_fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+                    
+                    for col_idx in range(len(bug_stats.columns) + 1):  # +1 for index column
+                        col_letter = chr(ord('A') + col_idx)
+                        cell = worksheet[f'{col_letter}{total_row}']
+                        cell.font = bold_font
+                        cell.fill = gray_fill
+                
+                # 添加分析摘要工作表
+                summary_data = []
+                summary_data.append(['分析时间', datetime.now().strftime('%Y-%m-%d %H:%M:%S')])
+                summary_data.append(['源文件', os.path.basename(source_file_path)])
+                summary_data.append(['分析文件数量', len(bug_stats)])
+                summary_data.append(['总Bug数量', bug_stats['总计'].sum()])
+                
+                # 各级别统计
+                for level in ['S级', 'A级', 'B级', 'C级', '未分级']:
+                    if level in bug_stats.columns:
+                        count = bug_stats[level].sum()
+                        if count > 0:
+                            summary_data.append([f'{level}Bug数量', count])
+                
+                # 程序Bug统计
+                if '程序Bug数' in bug_stats.columns:
+                    program_bugs = bug_stats['程序Bug数'].sum()
+                    program_bugs_fixed = bug_stats['程序Bug修复数'].sum()
+                    summary_data.append(['程序Bug总数', program_bugs])
+                    summary_data.append(['程序Bug已修复', program_bugs_fixed])
+                    if program_bugs > 0:
+                        fix_rate = (program_bugs_fixed / program_bugs) * 100
+                        summary_data.append(['程序Bug修复率', f'{fix_rate:.1f}%'])
+                
+                # 非程序Bug统计
+                if '非程序Bug数' in bug_stats.columns:
+                    non_program_bugs = bug_stats['非程序Bug数'].sum()
+                    non_program_bugs_fixed = bug_stats['非程序Bug修复数'].sum()
+                    summary_data.append(['非程序Bug总数', non_program_bugs])
+                    summary_data.append(['非程序Bug已修复', non_program_bugs_fixed])
+                    if non_program_bugs > 0:
+                        fix_rate = (non_program_bugs_fixed / non_program_bugs) * 100
+                        summary_data.append(['非程序Bug修复率', f'{fix_rate:.1f}%'])
+                
+                summary_df = pd.DataFrame(summary_data, columns=['项目', '值'])
+                summary_df.to_excel(writer, sheet_name='分析摘要', index=False)
+                
+                # 设置摘要工作表列宽
+                summary_worksheet = writer.sheets['分析摘要']
+                summary_worksheet.column_dimensions['A'].width = 20
+                summary_worksheet.column_dimensions['B'].width = 25
+            
+            self.log_message(f"Bug级别分析报告已生成: {report_filename}")
+            
+            # 不自动打开报告，只记录生成信息
+            
+        except Exception as e:
+            self.log_message(f"生成Bug级别分析报告失败: {str(e)}")
+
     def bug_analysis_complete(self, message):
         """Bug级别分析完成"""
         self.progress.stop()

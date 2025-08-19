@@ -33,3 +33,6 @@ temp_*/
 # Excel临时文件
 ~$*.xlsx
 ~$*.xls
+
+# 输出文件夹
+output/
