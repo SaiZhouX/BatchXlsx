@@ -253,15 +253,17 @@ class ExcelAnalysisGUI:
         # 清空之前的结果
         self.clear_bug_stats()
         
-        # 判断是单个文件还是批量文件处理
+        # 自动识别处理模式：只有1个文件时使用单个文件处理，否则使用批量处理
         if len(self.file_list) == 1:
             self.single_file_mode = True
+            self.log_message("检测到单个文件，使用单个文件处理模式")
             # 在新线程中执行单个文件分析
             analysis_thread = threading.Thread(target=self.perform_single_analysis)
             analysis_thread.daemon = True
             analysis_thread.start()
         else:
             self.single_file_mode = False
+            self.log_message(f"检测到{len(self.file_list)}个文件，自动使用批量处理模式")
             # 在新线程中执行批量分析
             analysis_thread = threading.Thread(target=self.perform_analysis)
             analysis_thread.daemon = True
