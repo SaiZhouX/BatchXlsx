@@ -12,7 +12,6 @@ class ConfigManager:
     DEFAULT_CONFIG = {
         # 文件夹配置
         'folders': {
-            'input': 'input',
             'output': 'output',
             'temp': 'temp_input',
             'logs': 'logs'
@@ -87,7 +86,9 @@ class ConfigManager:
     def _ensure_directories(self):
         """确保必要的目录存在"""
         for folder_key, folder_path in self._config['folders'].items():
-            Path(folder_path).mkdir(exist_ok=True)
+            # 跳过input目录，因为它通过界面选择
+            if folder_key != 'input':
+                Path(folder_path).mkdir(exist_ok=True)
     
     def get(self, key_path: str, default=None) -> Any:
         """
@@ -142,7 +143,9 @@ class ConfigManager:
         """
         folder_path = self.get(f'folders.{folder_name}', folder_name)
         path = Path(folder_path)
-        path.mkdir(exist_ok=True)
+        # 不为input目录自动创建文件夹
+        if folder_name != 'input':
+            path.mkdir(exist_ok=True)
         return path
     
     def get_supported_formats(self) -> List[str]:

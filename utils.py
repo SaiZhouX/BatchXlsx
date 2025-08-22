@@ -145,9 +145,9 @@ class DataUtils:
     """数据处理工具类"""
     
     @staticmethod
-    def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    def remove_useless_columns(df: pd.DataFrame) -> pd.DataFrame:
         """
-        清理DataFrame数据
+        删除无用列
         
         Args:
             df (pd.DataFrame): 原始数据
@@ -174,13 +174,58 @@ class DataUtils:
                 df = df.drop(columns=columns_to_drop)
                 logger.info(f"删除了无用列: {columns_to_drop}")
         
-        # 删除完全为空的行
-        if cleaning_config.get('remove_empty_rows', True):
-            df = df.dropna(how='all').reset_index(drop=True)
-        
         cleaned_shape = df.shape
         logger.info(f"数据清理完成: 原有 {original_shape[0]} 行 {original_shape[1]} 列，"
                    f"清理后 {cleaned_shape[0]} 行 {cleaned_shape[1]} 列")
+        
+        return df
+    
+    @staticmethod
+    def clean_empty_rows(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        删除完全为空的行
+        
+        Args:
+            df (pd.DataFrame): 原始数据
+            
+        Returns:
+            pd.DataFrame: 清理后的数据
+        """
+        if df.empty:
+            return df
+        
+        original_rows = len(df)
+        
+        # 删除完全为空的行
+        cleaning_config = config.get_data_cleaning_config()
+        if cleaning_config.get('remove_empty_rows', True):
+            df = df.dropna(how='all').reset_index(drop=True)
+        
+        logger.info(f"  原始数据行数: {original_rows}")
+        logger.info(f"  处理后数据行数: {len(df)}")
+        
+        if len(df) < original_rows:
+            logger.info(f"  删除了 {original_rows - len(df)} 行完全为空的数据")
+        
+        return df
+    
+    @staticmethod
+    def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        清理DataFrame数据
+        
+        Args:
+            df (pd.DataFrame): 原始数据
+            
+        Returns:
+            pd.DataFrame: 清理后的数据
+        """
+        if df.empty:
+            return df
+        
+        # 调用专门的方法清理无用列和空行
+        df = DataUtils.remove_useless_columns(df)
+        df = DataUtils.clean_empty_rows(df)
         
         return df
     
