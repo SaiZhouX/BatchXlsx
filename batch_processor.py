@@ -240,7 +240,7 @@ class BatchProcessor(ReportGenerator):
                 df = self._clean_column_names(df)
                 
                 # 添加分析列并设置默认值
-                df = self._add_analysis_columns(df)
+                df = DataUtils.add_analysis_columns(df)
                 
                 # 重置索引以确保没有重复索引问题
                 df = df.reset_index(drop=True)
@@ -261,43 +261,6 @@ class BatchProcessor(ReportGenerator):
         except Exception as e:
             self.logger.error(f"合并数据时出错: {e}")
             return pd.DataFrame()
-    
-    def _add_analysis_columns(self, df):
-        """
-        添加分析列：类型和修复状态
-        
-        Args:
-            df (pd.DataFrame): 原始数据
-            
-        Returns:
-            pd.DataFrame: 添加分析列后的数据
-        """
-        try:
-            # 添加类型列（默认为非程序Bug）
-            if '类型' not in df.columns:
-                df['类型'] = '非程序Bug'
-                self.logger.info("已添加'类型'列，默认值：非程序Bug")
-            
-            # 添加修复状态列（默认为未修复）
-            if '修复状态' not in df.columns:
-                df['修复状态'] = '未修复'
-                self.logger.info("已添加'修复状态'列，默认值：未修复")
-            else:
-                # 为现有修复状态列设置默认值
-                df['修复状态'] = df['修复状态'].fillna('未修复')
-                self.logger.info("已为'修复状态'列设置默认值：未修复")
-            
-            # 移除智能判断类型（基于关键词）
-            # df = self._infer_bug_type(df)
-            
-            # 移除智能判断修复状态（基于关键词）
-            # df = self._infer_fix_status(df)
-            
-            return df
-            
-        except Exception as e:
-            self.logger.error(f"添加分析列时出错: {e}")
-            return df
     
     def generate_reports(self, merged_df, processed_files=None):
         """

@@ -1,50 +1,59 @@
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, scrolledtext
-import os
-import shutil
-import threading
-from pathlib import Path
+from tkinter import ttk, filedialog, messagebox
 import pandas as pd
-from datetime import datetime
+import os
 import logging
+from pathlib import Path
+import shutil
+from datetime import datetime
+import threading
 
-# 导入自定义模块
 from batch_processor import BatchProcessor
-from bug_analyzer import BugAnalyzer
-from data_validator import DataValidator
 from single_processor import SingleProcessor
+from data_validator import DataValidator
+from bug_analyzer import BugAnalyzer
+
 
 class ExcelAnalysisGUI:
+    """Excel分析工具的GUI界面"""
+    
     def __init__(self, root):
         self.root = root
-        self.root.title("Excel批量处理与Bug分析工具")
-        self.root.geometry("1000x700")
+        self.root.title("Excel分析工具")
+        self.root.geometry("1200x800")
         
-        # 存储文件列表
-        self.file_list = []
-        # 标记是否为单个文件模式
-        self.single_file_mode = False
-        
-        # 创建界面
+        # 创建界面组件
         self.create_widgets()
         
-        # 配置日志
+        # 设置主题样式
         self.setup_logging()
+        
+        # 文件列表
+        self.file_list = []
+        
+        # 单个文件模式标志
+        self.single_file_mode = False
     
     def setup_logging(self):
-        """配置日志"""
-        # 创建日志处理器，将日志输出到GUI
-        self.log_handler = GUILogHandler(self.log_text)
+        """设置日志"""
+        # 创建日志目录
+        log_dir = Path("logs")
+        log_dir.mkdir(exist_ok=True)
+        
+        # 配置日志格式
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[self.log_handler]
+            handlers=[
+                logging.FileHandler(log_dir / 'app.log', encoding='utf-8'),
+                GUILogHandler(self.log_text)
+            ]
         )
         self.logger = logging.getLogger(__name__)
     
     def create_widgets(self):
         """创建界面组件"""
-        # 主框架
+        # 创建主框架
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
@@ -52,151 +61,136 @@ class ExcelAnalysisGUI:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
-        main_frame.rowconfigure(2, weight=1)
         main_frame.rowconfigure(4, weight=1)
         
-        # 标题
-        title_label = ttk.Label(main_frame, text="Excel批量处理与Bug分析工具", 
-                               font=('Arial', 16, 'bold'))
-        title_label.grid(row=0, column=0, columnspan=3, pady=(0, 20))
-        
-        # 文件选择区域
-        file_frame = ttk.LabelFrame(main_frame, text="文件选择", padding="10")
-        file_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        # 文件操作框架
+        file_frame = ttk.LabelFrame(main_frame, text="文件操作", padding="5")
+        file_frame.grid(row=0, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
         file_frame.columnconfigure(1, weight=1)
+        file_frame.columnconfigure(3, weight=1)
         
-        # 添加单个文件按钮
-        ttk.Button(file_frame, text="添加单个Excel文件", 
-                  command=self.add_single_file).grid(row=0, column=0, padx=(0, 10))
+        # 添加文件按钮
+        ttk.Button(file_frame, text="添加文件", command=self.add_file).grid(row=0, column=0, padx=(0, 5))
         
         # 添加文件夹按钮
-        ttk.Button(file_frame, text="添加文件夹", 
-                  command=self.add_folder).grid(row=0, column=1, padx=(0, 10))
+        ttk.Button(file_frame, text="添加文件夹", command=self.add_folder).grid(row=0, column=1, padx=(0, 5))
         
-        # 清空文件列表按钮
-        ttk.Button(file_frame, text="清空列表", 
-                  command=self.clear_files).grid(row=0, column=2)
+        # 清空列表按钮
+        ttk.Button(file_frame, text="清空列表", command=self.clear_files).grid(row=0, column=2, padx=(0, 5))
         
-        # 文件列表显示
-        list_frame = ttk.LabelFrame(main_frame, text="已选择的文件", padding="10")
-        list_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
+        # 开始分析按钮
+        self.analyze_button = ttk.Button(file_frame, text="开始分析", command=self.start_analysis)
+        self.analyze_button.grid(row=0, column=3, padx=(0, 5))
+        
+        # Bug级别分析按钮
+        self.bug_analysis_button = ttk.Button(file_frame, text="Bug级别分析", command=self.start_bug_analysis)
+        self.bug_analysis_button.grid(row=0, column=4, padx=(0, 5))
+        
+        # 进度条
+        self.progress = ttk.Progressbar(file_frame, mode='indeterminate')
+        self.progress.grid(row=0, column=5, sticky=(tk.W, tk.E), padx=(5, 0))
+        file_frame.columnconfigure(5, weight=1)
+        
+        # 文件列表框架
+        list_frame = ttk.LabelFrame(main_frame, text="文件列表", padding="5")
+        list_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(0, weight=1)
         
-        # 创建文件列表
-        self.file_listbox = tk.Listbox(list_frame, height=8)
+        # 文件列表
+        self.file_listbox = tk.Listbox(list_frame, selectmode=tk.EXTENDED)
         self.file_listbox.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         # 滚动条
-        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.file_listbox.yview)
-        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
-        self.file_listbox.configure(yscrollcommand=scrollbar.set)
+        list_scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.file_listbox.yview)
+        list_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.file_listbox.configure(yscrollcommand=list_scrollbar.set)
         
-        # 操作按钮区域
-        button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=3, column=0, columnspan=3, pady=(0, 10))
-        
-        # 开始分析按钮
-        self.analyze_button = ttk.Button(button_frame, text="开始分析", 
-                                        command=self.start_analysis, 
-                                        style='Accent.TButton')
-        self.analyze_button.pack(side=tk.LEFT, padx=(0, 10))
-        
-        # Bug级别分析按钮
-        self.bug_analysis_button = ttk.Button(button_frame, text="Bug级别分析", 
-                                             command=self.start_bug_analysis)
-        self.bug_analysis_button.pack(side=tk.LEFT, padx=(0, 10))
-        
-        # 进度条
-        self.progress = ttk.Progressbar(button_frame, mode='indeterminate')
-        self.progress.pack(side=tk.LEFT, padx=(0, 10), fill=tk.X, expand=True)
-        
-        # 结果显示区域
-        result_frame = ttk.LabelFrame(main_frame, text="分析结果", padding="10")
-        result_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S))
-        result_frame.columnconfigure(0, weight=1)
-        result_frame.rowconfigure(0, weight=1)
-        
-        # 创建Notebook用于显示不同的结果
-        self.notebook = ttk.Notebook(result_frame)
-        self.notebook.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        
-        # Bug统计标签页
-        self.bug_stats_frame = ttk.Frame(self.notebook)
-        self.notebook.add(self.bug_stats_frame, text="Bug级别统计")
+        # Bug统计框架
+        stats_frame = ttk.LabelFrame(main_frame, text="Bug统计", padding="5")
+        stats_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
+        stats_frame.columnconfigure(0, weight=1)
+        stats_frame.rowconfigure(0, weight=1)
         
         # 创建Bug统计表格
-        self.create_bug_stats_table()
+        self.bug_tree = self.create_bug_stats_table(stats_frame)
         
-        # 日志标签页
-        log_frame = ttk.Frame(self.notebook)
-        self.notebook.add(log_frame, text="处理日志")
+        # 统计摘要
+        self.summary_label = ttk.Label(stats_frame, text="")
+        self.summary_label.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
         
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=15, width=80)
-        self.log_text.pack(fill=tk.BOTH, expand=True)
+        # 日志框架
+        log_frame = ttk.LabelFrame(main_frame, text="日志", padding="5")
+        log_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+        
+        # 日志文本框
+        self.log_text = tk.Text(log_frame, height=8)
+        self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # 日志滚动条
+        log_scrollbar = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
+        log_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.log_text.configure(yscrollcommand=log_scrollbar.set)
     
-    def create_bug_stats_table(self):
+    def create_bug_stats_table(self, parent):
         """创建Bug统计表格"""
-        # 表格框架
-        table_frame = ttk.Frame(self.bug_stats_frame)
-        table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
-        # 创建Treeview表格 - 调整列顺序，将统计列移到文件名称后面
+        # 创建Treeview
         columns = ('文件名称', '总计', '程序Bug数', '程序Bug修复数', '非程序Bug数', '非程序Bug修复数', 'S级', 'A级', 'B级', 'C级', '未分级')
-        self.bug_tree = ttk.Treeview(table_frame, columns=columns, show='headings', height=15)
+        tree = ttk.Treeview(parent, columns=columns, show='headings', height=10)
         
-        # 设置列标题和列宽
-        column_widths = {
-            '文件名称': 100,
-            '总计': 60,
-            '程序Bug数': 80,
-            '程序Bug修复数': 90,
-            '非程序Bug数': 90,
-            '非程序Bug修复数': 100,
-            'S级': 50,
-            'A级': 50,
-            'B级': 50,
-            'C级': 50,
-            '未分级': 60
-        }
+        # 定义列标题和宽度
+        column_info = [
+            ('文件名称', 150),
+            ('总计', 80),
+            ('程序Bug数', 100),
+            ('程序Bug修复数', 120),
+            ('非程序Bug数', 120),
+            ('非程序Bug修复数', 140),
+            ('S级', 60),
+            ('A级', 60),
+            ('B级', 60),
+            ('C级', 60),
+            ('未分级', 80)
+        ]
         
-        for col in columns:
-            self.bug_tree.heading(col, text=col)
-            width = column_widths.get(col, 60)
-            self.bug_tree.column(col, width=width, anchor='center')
+        for col, width in column_info:
+            tree.heading(col, text=col)
+            tree.column(col, width=width, anchor='center')
         
-        # 添加滚动条
-        v_scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.bug_tree.yview)
-        h_scrollbar = ttk.Scrollbar(table_frame, orient="horizontal", command=self.bug_tree.xview)
-        
-        self.bug_tree.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+        # 创建滚动条
+        scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
         
         # 布局
-        self.bug_tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        v_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
-        h_scrollbar.grid(row=1, column=0, sticky=(tk.W, tk.E))
+        tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
         
-        table_frame.columnconfigure(0, weight=1)
-        table_frame.rowconfigure(0, weight=1)
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=1)
         
-        # 统计摘要标签
-        self.summary_label = ttk.Label(self.bug_stats_frame, text="", font=('Arial', 10))
-        self.summary_label.pack(pady=10)
+        return tree
     
-    def add_single_file(self):
-        """添加单个Excel文件"""
-        file_path = filedialog.askopenfilename(
+    def add_file(self):
+        """添加Excel文件"""
+        file_paths = filedialog.askopenfilenames(
             title="选择Excel文件",
-            filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]
+            filetypes=[("Excel files", "*.xlsx *.xls")]
         )
         
-        if file_path:
-            if file_path not in self.file_list:
-                self.file_list.append(file_path)
-                self.file_listbox.insert(tk.END, os.path.basename(file_path))
-                self.log_message(f"已添加文件: {os.path.basename(file_path)}")
+        if file_paths:
+            added_count = 0
+            for file_path in file_paths:
+                if file_path not in self.file_list and not Path(file_path).name.startswith('~$'):
+                    self.file_list.append(file_path)
+                    self.file_listbox.insert(tk.END, Path(file_path).name)
+                    added_count += 1
+            
+            if added_count > 0:
+                self.log_message(f"添加了 {added_count} 个Excel文件")
             else:
-                messagebox.showwarning("警告", "文件已存在于列表中")
+                messagebox.showinfo("信息", "没有添加新的文件")
     
     def add_folder(self):
         """添加文件夹中的所有Excel文件"""

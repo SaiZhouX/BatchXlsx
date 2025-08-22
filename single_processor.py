@@ -48,6 +48,9 @@ class SingleProcessor(ReportGenerator):
                 self.logger.warning("数据清理后为空，创建数据说明")
                 df = self._create_empty_data_explanation(original_df, original_rows, original_cols)
             
+            # 添加分析列（类型和修复状态）
+            df = DataUtils.add_analysis_columns(df)
+            
             # 添加元数据
             df = DataUtils.add_metadata_columns(df, file_path)
             

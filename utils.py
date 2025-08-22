@@ -308,6 +308,40 @@ class DataUtils:
                 break
         
         return result
+    
+    @staticmethod
+    def add_analysis_columns(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        添加分析列：类型和修复状态
+        
+        Args:
+            df (pd.DataFrame): 原始数据
+            
+        Returns:
+            pd.DataFrame: 添加分析列后的数据
+        """
+        try:
+            logger = LoggerConfig.get_logger(__name__)
+            
+            # 添加类型列（默认为非程序Bug）
+            if '类型' not in df.columns:
+                df['类型'] = '非程序Bug'
+                logger.info("已添加'类型'列，默认值：非程序Bug")
+            
+            # 添加修复状态列（默认为未修复）
+            if '修复状态' not in df.columns:
+                df['修复状态'] = '未修复'
+                logger.info("已添加'修复状态'列，默认值：未修复")
+            else:
+                # 为现有修复状态列设置默认值
+                df['修复状态'] = df['修复状态'].fillna('未修复')
+                logger.info("已为'修复状态'列设置默认值：未修复")
+            
+            return df
+            
+        except Exception as e:
+            logger.error(f"添加分析列时出错: {e}")
+            return df
 
 class TextUtils:
     """文本处理工具类"""
@@ -334,6 +368,7 @@ class TextUtils:
             r'(\d{2}/\d{2})',  # MM/DD格式
             r'(\d{2}-\d{2})',  # MM-DD格式
             r'(\d{1,2})月(\d{1,2})日?',  # 中文日期格式
+            r'(\d{1,2})\.(\d{1,2})(?=\.|$)',  # 点号分隔的日期格式（如8.13）
         ]
         
         for pattern in date_patterns:
@@ -343,6 +378,10 @@ class TextUtils:
                     date_str = match.group(1)
                     if len(date_str) == 4 and not date_str.startswith('20'):
                         return date_str
+                elif len(match.groups()) == 2:
+                    month = match.group(1).zfill(2)
+                    day = match.group(2).zfill(2)
+                    return f"{month}{day}"
                 elif len(match.groups()) == 2:
                     month = match.group(1).zfill(2)
                     day = match.group(2).zfill(2)
@@ -364,7 +403,7 @@ class TextUtils:
             Optional[str]: 提取的测试人姓名
         """
         if pd.isna(filename) or not isinstance(filename, str):
-            return None
+            return "质检"
         
         # 常见姓名列表（优先匹配）
         common_names = ['胡先美', '王超', '李明', '张三', '李四', '王五', '赵六', '孙七']
@@ -389,7 +428,8 @@ class TextUtils:
                     potential_name not in exclude_words):
                     return potential_name
         
-        return None
+        # 默认返回质检
+        return "质检"
     
     @staticmethod
     def extract_date_and_tester(filename: str) -> Optional[str]:
@@ -405,12 +445,13 @@ class TextUtils:
         date_str = TextUtils.extract_date_from_filename(filename)
         tester_name = TextUtils.extract_tester_from_filename(filename)
         
-        if date_str and tester_name:
-            return f"{date_str}_{tester_name}"
-        elif date_str:
-            return f"{date_str}_质检"
-        
-        return None
+        # 确保至少有一个有效值
+        if not date_str:
+            date_str = "未识别"
+        if not tester_name:
+            tester_name = "质检"
+            
+        return f"{date_str}_{tester_name}"
 
 class ExcelUtils:
     """Excel操作工具类"""

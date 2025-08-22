@@ -285,7 +285,9 @@ class BugAnalyzer(ExcelProcessor):
         Returns:
             str: 提取的日期和姓名，格式为"0804_胡先美"，如果提取失败返回None
         """
-        return TextUtils.extract_date_and_tester(filename)
+        result = TextUtils.extract_date_and_tester(filename)
+        self.logger.debug(f"文件名 '{filename}' 提取结果: {result}")
+        return result
     
     def process(self):
         """
