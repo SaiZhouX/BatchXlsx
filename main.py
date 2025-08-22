@@ -589,11 +589,37 @@ class ExcelAnalysisGUI:
             report_filename = f"Bug级别分析报告_{timestamp}.xlsx"
             report_path = output_dir / report_filename
             
+            # 重新排列列的顺序
+            # 原始列顺序: 文件名称, S级, A级, B级, C级, 未分级, 总计, 程序Bug数, 程序Bug修复数, 非程序Bug数, 非程序Bug修复数
+            # 新的列顺序: 文件名称, 总计, 程序Bug数, 程序Bug修复数, 非程序Bug数, 非程序Bug修复数, S级, A级, B级, C级, 未分级
+            if '文件名称' in bug_stats.index.name or bug_stats.index.name is None:
+                bug_stats_reset = bug_stats.reset_index()
+            else:
+                bug_stats_reset = bug_stats.copy()
+                bug_stats_reset['文件名称'] = bug_stats_reset.index
+            
+            # 确定列的顺序
+            column_order = ['文件名称']
+            
+            # 添加总计相关的列
+            stats_columns = ['总计', '程序Bug数', '程序Bug修复数', '非程序Bug数', '非程序Bug修复数']
+            for col in stats_columns:
+                if col in bug_stats_reset.columns:
+                    column_order.append(col)
+            
+            # 添加级别相关的列
+            level_columns = ['S级', 'A级', 'B级', 'C级', '未分级']
+            for col in level_columns:
+                if col in bug_stats_reset.columns:
+                    column_order.append(col)
+            
+            # 重新排列DataFrame的列
+            bug_stats_reordered = bug_stats_reset[column_order]
+            
             # 创建Excel写入器
             with pd.ExcelWriter(report_path, engine='openpyxl') as writer:
                 # 写入Bug统计数据
-                bug_stats_df = bug_stats.reset_index()
-                bug_stats_df.to_excel(writer, sheet_name='Bug级别统计', index=False)
+                bug_stats_reordered.to_excel(writer, sheet_name='Bug级别统计', index=False)
                 
                 # 获取工作表对象进行格式化
                 worksheet = writer.sheets['Bug级别统计']
@@ -617,8 +643,8 @@ class ExcelAnalysisGUI:
                     worksheet.column_dimensions[col].width = width
                 
                 # 添加总计行（如果有多个文件）
-                if len(bug_stats) > 1:
-                    total_row = len(bug_stats) + 2  # +2 因为有标题行和从1开始计数
+                if len(bug_stats_reordered) > 1:
+                    total_row = len(bug_stats_reordered) + 2  # +2 因为有标题行和从1开始计数
                     
                     # 计算各列总计
                     worksheet[f'A{total_row}'] = '总计'
@@ -638,7 +664,7 @@ class ExcelAnalysisGUI:
                     bold_font = Font(bold=True)
                     gray_fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
                     
-                    for col_idx in range(len(bug_stats.columns) + 1):  # +1 for index column
+                    for col_idx in range(len(bug_stats_reordered.columns)):
                         col_letter = chr(ord('A') + col_idx)
                         cell = worksheet[f'{col_letter}{total_row}']
                         cell.font = bold_font
