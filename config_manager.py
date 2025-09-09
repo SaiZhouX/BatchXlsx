@@ -152,29 +152,42 @@ class ConfigManager:
         """获取支持的文件格式列表"""
         return self.get('file_formats.supported_excel', ['.xlsx'])
     
+    def get_config(self, config_type: str) -> Dict[str, Any]:
+        """
+        通用的配置获取方法
+        
+        Args:
+            config_type (str): 配置类型，如 'excel', 'report', 'bug_analysis' 等
+            
+        Returns:
+            Dict[str, Any]: 配置字典
+        """
+        return self.get(config_type, {})
+    
+    # 为了向后兼容，保留原有方法作为别名
     def get_excel_config(self) -> Dict[str, Any]:
         """获取Excel处理配置"""
-        return self.get('excel', {})
+        return self.get_config('excel')
     
     def get_report_config(self) -> Dict[str, Any]:
         """获取报告配置"""
-        return self.get('report', {})
+        return self.get_config('report')
     
     def get_bug_analysis_config(self) -> Dict[str, Any]:
         """获取Bug分析配置"""
-        return self.get('bug_analysis', {})
+        return self.get_config('bug_analysis')
     
     def get_data_cleaning_config(self) -> Dict[str, Any]:
         """获取数据清理配置"""
-        return self.get('data_cleaning', {})
+        return self.get_config('data_cleaning')
     
     def get_logging_config(self) -> Dict[str, Any]:
         """获取日志配置"""
-        return self.get('logging', {})
+        return self.get_config('logging')
     
     def get_gui_config(self) -> Dict[str, Any]:
         """获取GUI配置"""
-        return self.get('gui', {})
+        return self.get_config('gui')
     
     def is_supported_file(self, file_path: str) -> bool:
         """

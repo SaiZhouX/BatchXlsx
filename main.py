@@ -278,17 +278,17 @@ class ExcelAnalysisGUI:
             report_path = processor.process_single_file(file_path)
             
             if not report_path:
-                self.root.after(0, lambda: self.analysis_complete("单个文件分析失败"))
+                self.root.after(0, lambda: self.task_complete("单个文件分析失败"))
                 return
             
             # 在主线程中打开详细分析报告
             self.root.after(0, lambda file=str(report_path): self.open_report_file(file))
             
-            self.root.after(0, lambda: self.analysis_complete("单个文件分析完成！"))
+            self.root.after(0, lambda: self.task_complete("单个文件分析完成！"))
             
         except Exception as e:
             error_msg = f"单个文件分析过程中出现错误: {str(e)}"
-            self.root.after(0, lambda: self.analysis_complete(error_msg))
+            self.root.after(0, lambda: self.task_complete(error_msg))
 
     def perform_analysis(self):
         """执行批量分析（在后台线程中运行）"""
@@ -313,13 +313,13 @@ class ExcelAnalysisGUI:
             xlsx_files = processor.read_all_files()
             
             if not xlsx_files:
-                self.root.after(0, lambda: self.analysis_complete("没有找到可处理的文件"))
+                self.root.after(0, lambda: self.task_complete("没有找到可处理的文件"))
                 return
             
             merged_df = processor.merge_data(xlsx_files)
             
             if merged_df.empty:
-                self.root.after(0, lambda: self.analysis_complete("数据合并失败"))
+                self.root.after(0, lambda: self.task_complete("数据合并失败"))
                 return
             
             # 生成报告
@@ -336,11 +336,11 @@ class ExcelAnalysisGUI:
             # 清理临时文件夹
             shutil.rmtree(temp_input, ignore_errors=True)
             
-            self.root.after(0, lambda: self.analysis_complete("分析完成！"))
+            self.root.after(0, lambda: self.task_complete("分析完成！"))
             
         except Exception as e:
             error_msg = f"分析过程中出现错误: {str(e)}"
-            self.root.after(0, lambda: self.analysis_complete(error_msg))
+            self.root.after(0, lambda: self.task_complete(error_msg))
     
     def analyze_bug_levels_for_gui(self, excel_file_path):
         """为GUI优化的Bug级别分析"""
@@ -533,21 +533,12 @@ class ExcelAnalysisGUI:
     def open_report_file(self, file_path):
         """打开报告文件"""
         try:
-            import subprocess
-            import sys
-            
-            if sys.platform.startswith('win'):
-                # Windows
-                os.startfile(file_path)
-            elif sys.platform.startswith('darwin'):
-                # macOS
-                subprocess.call(['open', file_path])
+            from utils import FileUtils
+            success = FileUtils.open_file(file_path)
+            if success:
+                self.log_message(f"已打开详细分析报告: {os.path.basename(file_path)}")
             else:
-                # Linux
-                subprocess.call(['xdg-open', file_path])
-            
-            self.log_message(f"已打开详细分析报告: {os.path.basename(file_path)}")
-            
+                self.log_message(f"打开报告文件失败: {file_path}")
         except Exception as e:
             self.log_message(f"打开报告文件失败: {str(e)}")
     
@@ -587,11 +578,11 @@ class ExcelAnalysisGUI:
             
             # 在主线程中更新GUI
             self.root.after(0, lambda: self.update_bug_stats(bug_stats))
-            self.root.after(0, lambda: self.bug_analysis_complete("Bug级别分析完成！"))
+            self.root.after(0, lambda: self.task_complete("Bug级别分析完成！", True))
             
         except Exception as e:
             error_msg = f"Bug级别分析过程中出现错误: {str(e)}"
-            self.root.after(0, lambda: self.bug_analysis_complete(error_msg))
+            self.root.after(0, lambda: self.task_complete(error_msg, True))
     
     def generate_bug_analysis_report(self, bug_stats, source_file_path):
         """生成Bug级别分析报告"""
@@ -738,25 +729,22 @@ class ExcelAnalysisGUI:
         except Exception as e:
             self.log_message(f"生成Bug级别分析报告失败: {str(e)}")
 
-    def bug_analysis_complete(self, message):
-        """Bug级别分析完成"""
+    def task_complete(self, message, is_bug_analysis=False):
+        """统一的任务完成处理"""
         self.progress.stop()
-        self.bug_analysis_button.config(state='normal')
+        
+        if is_bug_analysis:
+            self.bug_analysis_button.config(state='normal')
+        else:
+            self.analyze_button.config(state='normal')
+        
         self.log_message(message)
         
         # 只显示错误提示框，取消完成提示框
         if "错误" in message:
             messagebox.showerror("错误", message)
-    
-    def analysis_complete(self, message):
-        """分析完成"""
-        self.progress.stop()
-        self.analyze_button.config(state='normal')
-        self.log_message(message)
-        
-        # 只显示错误提示框，取消完成提示框
-        if "错误" in message:
-            messagebox.showerror("错误", message)
+
+
 
 class GUILogHandler(logging.Handler):
     """自定义日志处理器，将日志输出到GUI"""
