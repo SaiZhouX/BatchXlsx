@@ -390,13 +390,29 @@ class ExcelAnalysisGUI:
                 'B-一般': 'B级',
                 'C-轻微': 'C级'
             }
-            df_clean['级别'] = df_clean[level_col].map(level_mapping).fillna(df_clean[level_col])
+            
+            # 先映射，对于无法映射的值才设为'未分级'
+            df_clean['级别'] = df_clean[level_col].map(level_mapping)
+            
+            # 只有真正无法映射的值才设为'未分级'
+            unmapped_mask = df_clean['级别'].isna()
+            df_clean.loc[unmapped_mask, '级别'] = '未分级'
+            
+            # 验证映射结果
+            self.log_message(f"映射后级别分布: {df_clean['级别'].value_counts().to_dict()}")
             
             # 统计各级别Bug数量
             result = df_clean.groupby(['文件名称', '级别']).size().unstack(fill_value=0)
             
-            # 确保包含所有级别的列
-            for level in ['S级', 'A级', 'B级', 'C级', '未分级']:
+            # 确保包含基本级别的列，但只有当数据中真的存在'未分级'时才添加该列
+            expected_levels = ['S级', 'A级', 'B级', 'C级']
+            actual_levels = df_clean['级别'].unique()
+            
+            # 只有当数据中真的存在'未分级'时才添加该列
+            if '未分级' in actual_levels:
+                expected_levels.append('未分级')
+                
+            for level in expected_levels:
                 if level not in result.columns:
                     result[level] = 0
             
@@ -654,10 +670,13 @@ class ExcelAnalysisGUI:
                     worksheet[f'E{total_row}'] = bug_stats['非程序Bug数'].sum() if '非程序Bug数' in bug_stats.columns else 0
                     worksheet[f'F{total_row}'] = bug_stats['非程序Bug修复数'].sum() if '非程序Bug修复数' in bug_stats.columns else 0
                     
-                    # 计算各级别总计
-                    for col_idx, level in enumerate(['S级', 'A级', 'B级', 'C级', '未分级'], start=7):
-                        col_letter = chr(ord('A') + col_idx)
-                        worksheet[f'{col_letter}{total_row}'] = bug_stats[level].sum() if level in bug_stats.columns else 0
+                    # 计算各级别总计 - 动态根据实际列位置写入
+                    level_start_col = 7  # S级开始的列位置（G列）
+                    for level in ['S级', 'A级', 'B级', 'C级', '未分级']:
+                        if level in bug_stats_reordered.columns:
+                            col_idx = bug_stats_reordered.columns.get_loc(level)
+                            col_letter = chr(ord('A') + col_idx)
+                            worksheet[f'{col_letter}{total_row}'] = bug_stats[level].sum() if level in bug_stats.columns else 0
                     
                     # 设置总计行样式
                     from openpyxl.styles import Font, PatternFill
